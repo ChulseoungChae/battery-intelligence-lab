@@ -1,6 +1,6 @@
-# ev_soh_aicar — PatchTST SOH 예측
+# ev_soh_prediction — PatchTST SOH 예측
 
-`./data`의 aicar BMS CSV로 **일 단위 다변량 궤적**을 만든 뒤, PatchTST로 **H일 후 SOH**를 예측하는 프로젝트입니다.
+`./data`의 EV BMS CSV로 **일 단위 다변량 궤적**을 만든 뒤, PatchTST로 **H일 후 SOH**를 예측하는 프로젝트입니다.
 
 ---
 
