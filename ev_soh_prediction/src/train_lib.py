@@ -208,10 +208,14 @@ def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFr
     return summary
 
 
-def run_train(experiment: str, args) -> Path:
-    ensure_exp_dirs(experiment)
-    traj = Path(args.traj) if args.traj else traj_path(experiment)
-    rdir = run_dir(experiment, args.L, args.H)
+def run_train(experiment: str, args, mode: str | None = None) -> Path:
+    mode = mode or getattr(args, "mode", None)
+    if experiment == "by_chg_mode" and mode is None:
+        raise SystemExit("by_chg_mode requires --mode slow|fast")
+
+    ensure_exp_dirs(experiment, mode)
+    traj = Path(args.traj) if args.traj else traj_path(experiment, mode)
+    rdir = run_dir(experiment, args.L, args.H, mode=mode)
     out_dir = Path(args.out_dir) if args.out_dir else (rdir / "models")
 
     if not traj.exists():
@@ -224,7 +228,9 @@ def run_train(experiment: str, args) -> Path:
     device = torch.device(
         "cpu" if args.cpu or not torch.cuda.is_available() else "cuda"
     )
-    print(f"[train] exp={experiment} L={args.L} H={args.H} device={device} traj={traj}")
+    tag = f" mode={mode}" if mode else ""
+    print(f"[train] exp={experiment}{tag} L={args.L} H={args.H} device={device}")
+    print(f"[train] traj={traj}")
     print(f"[train] out={out_dir}")
 
     df = pd.read_csv(traj)
@@ -273,6 +279,7 @@ def run_train(experiment: str, args) -> Path:
     meta["H"] = args.H
     meta["holdout_device"] = args.holdout_device
     meta["experiment"] = experiment
+    meta["mode"] = mode
 
     stem = out_dir / f"ev_L{args.L}_H{args.H}_patchtst"
     torch.save(model.state_dict(), stem.with_suffix(".pt"))

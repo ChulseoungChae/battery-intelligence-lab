@@ -15,11 +15,21 @@ from .config import ACC_TOLS, ROOT, ensure_exp_dirs, run_dir, run_tag, traj_path
 from .train_lib import accuracy_at, build_windows, predict, train_model
 
 
-def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> Path:
-    ensure_exp_dirs(experiment)
-    rdir = run_dir(experiment, L, H)
+def run_plot(
+    experiment: str,
+    *,
+    L: int = 14,
+    H: int = 7,
+    epochs: int = 60,
+    mode: str | None = None,
+) -> Path:
+    if experiment == "by_chg_mode" and mode is None:
+        raise SystemExit("by_chg_mode requires --mode slow|fast")
+
+    ensure_exp_dirs(experiment, mode)
+    rdir = run_dir(experiment, L, H, mode=mode)
     fig_dir = rdir / "figs"
-    traj = traj_path(experiment)
+    traj = traj_path(experiment, mode)
     if not traj.exists():
         raise SystemExit(
             f"Trajectory not found: {traj}\n"
@@ -32,7 +42,8 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
     df[time_col] = pd.to_datetime(df[time_col])
     W = build_windows(df, L, H, time_col=time_col)
     tag = run_tag(L, H)
-    print(f"[plot] exp={experiment} {tag} windows={len(W['y'])} → {fig_dir}")
+    mode_s = f"/{mode}" if mode else ""
+    print(f"[plot] exp={experiment}{mode_s} {tag} windows={len(W['y'])} → {fig_dir}")
 
     model_kw = dict(
         patch_len=4, stride=2, d_model=64, n_heads=4, n_layers=2, d_ff=128, dropout=0.1
@@ -81,7 +92,7 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
         ax.set_ylabel("SOH (%)")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, loc="best")
-    fig.suptitle(f"[{experiment} {tag}] LOVO SOH forecast", fontsize=13)
+    fig.suptitle(f"[{experiment}{mode_s} {tag}] LOVO SOH forecast", fontsize=13)
     fig.autofmt_xdate()
     fig.tight_layout()
     fig.savefig(fig_dir / "lovo_pred_timeseries.png", dpi=140, bbox_inches="tight")
@@ -101,7 +112,7 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
     ax.set_ylim(lo, hi)
     ax.set_xlabel("Actual SOH (%)")
     ax.set_ylabel("Predicted SOH (%)")
-    ax.set_title(f"[{experiment} {tag}] Actual vs Predicted")
+    ax.set_title(f"[{experiment}{mode_s} {tag}] Actual vs Predicted")
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)

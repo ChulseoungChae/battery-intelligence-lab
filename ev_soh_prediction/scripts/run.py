@@ -3,16 +3,20 @@
 
 Experiments (--exp)
 -------------------
-  daily       일별 압축 궤적 (기본, 구현됨)
-  session     일별 압축 없음 / 세션 단위 (준비 중)
-  by_chg_mode 충전 방식(slow/fast) 분리 (준비 중)
+  daily       일별 압축 궤적
+  session     일별 압축 없음 (준비 중)
+  by_chg_mode 충전 방식(slow/fast) 분리
 
 Usage
 -----
   python scripts/run.py prepare --exp daily
-  python scripts/run.py train   --exp daily
-  python scripts/run.py plot    --exp daily
-  python scripts/run.py all     --exp daily   # prepare + train + plot
+  python scripts/run.py train   --exp daily --L 30 --H 7
+  python scripts/run.py plot    --exp daily --L 30 --H 7
+
+  python scripts/run.py prepare --exp by_chg_mode
+  python scripts/run.py train   --exp by_chg_mode --mode slow --L 30 --H 7
+  python scripts/run.py train   --exp by_chg_mode --mode fast --L 30 --H 7
+  python scripts/run.py train   --exp by_chg_mode --mode all  --L 30 --H 7
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.config import EXPERIMENTS  # noqa: E402
+from src.config import CHG_MODES, EXPERIMENTS  # noqa: E402
 from src.data_prep import prepare  # noqa: E402
 from src.plot_lib import run_plot  # noqa: E402
 from src.train_lib import run_train  # noqa: E402
@@ -35,6 +39,12 @@ def _add_exp_arg(p: argparse.ArgumentParser) -> None:
         choices=EXPERIMENTS,
         default="daily",
         help="experiment bucket under outputs/<exp>/",
+    )
+    p.add_argument(
+        "--mode",
+        choices=(*CHG_MODES, "all"),
+        default=None,
+        help="for by_chg_mode: slow | fast | all",
     )
 
 
@@ -58,6 +68,14 @@ def _add_train_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--holdout-device", type=str, default=None)
     p.add_argument("--skip-lovo", action="store_true")
     p.add_argument("--cpu", action="store_true")
+
+
+def _modes_to_run(exp: str, mode: str | None) -> list[str | None]:
+    if exp != "by_chg_mode":
+        return [None]
+    if mode is None or mode == "all":
+        return list(CHG_MODES)
+    return [mode]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -91,17 +109,21 @@ def main(argv: list[str] | None = None) -> None:
 
     args = ap.parse_args(argv)
     exp = args.exp
+    modes = _modes_to_run(exp, args.mode)
 
     if args.cmd == "prepare":
         prepare(exp, data_dir=args.data_dir, chunksize=args.chunksize)
     elif args.cmd == "train":
-        run_train(exp, args)
+        for m in modes:
+            run_train(exp, args, mode=m)
     elif args.cmd == "plot":
-        run_plot(exp, L=args.L, H=args.H, epochs=args.epochs)
+        for m in modes:
+            run_plot(exp, L=args.L, H=args.H, epochs=args.epochs, mode=m)
     elif args.cmd == "all":
         prepare(exp, data_dir=args.data_dir, chunksize=args.chunksize)
-        run_train(exp, args)
-        run_plot(exp, L=args.L, H=args.H, epochs=args.epochs)
+        for m in modes:
+            run_train(exp, args, mode=m)
+            run_plot(exp, L=args.L, H=args.H, epochs=args.epochs, mode=m)
     else:
         ap.error(f"unknown command {args.cmd}")
 
