@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .config import ACC_TOLS, FEATURES, ensure_exp_dirs, models_dir, traj_path
+from .config import ACC_TOLS, FEATURES, ensure_exp_dirs, run_dir, traj_path
 from .patchtst import PatchTST
 
 
@@ -211,7 +211,8 @@ def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFr
 def run_train(experiment: str, args) -> Path:
     ensure_exp_dirs(experiment)
     traj = Path(args.traj) if args.traj else traj_path(experiment)
-    out_dir = Path(args.out_dir) if args.out_dir else models_dir(experiment)
+    rdir = run_dir(experiment, args.L, args.H)
+    out_dir = Path(args.out_dir) if args.out_dir else (rdir / "models")
 
     if not traj.exists():
         raise SystemExit(
@@ -223,7 +224,8 @@ def run_train(experiment: str, args) -> Path:
     device = torch.device(
         "cpu" if args.cpu or not torch.cuda.is_available() else "cuda"
     )
-    print(f"[train] exp={experiment} device={device} traj={traj}")
+    print(f"[train] exp={experiment} L={args.L} H={args.H} device={device} traj={traj}")
+    print(f"[train] out={out_dir}")
 
     df = pd.read_csv(traj)
     time_col = "date" if "date" in df.columns else "ts"

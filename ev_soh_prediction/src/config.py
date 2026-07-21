@@ -83,6 +83,19 @@ def figs_dir(name: str) -> Path:
 
 def ensure_exp_dirs(name: str) -> Path:
     d = exp_dir(name)
-    for sub in ("traj", "models", "figs"):
+    for sub in ("traj", "models", "figs", "runs"):
+        (d / sub).mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def run_tag(L: int, H: int) -> str:
+    return f"L{L}_H{H}"
+
+
+def run_dir(experiment: str, L: int, H: int) -> Path:
+    """outputs/<exp>/runs/L{L}_H{H}/ — 설정별 결과 분리."""
+    ensure_exp_dirs(experiment)
+    d = exp_dir(experiment) / "runs" / run_tag(L, H)
+    for sub in ("models", "figs"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     return d

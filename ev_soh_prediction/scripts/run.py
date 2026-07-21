@@ -29,6 +29,15 @@ from src.plot_lib import run_plot  # noqa: E402
 from src.train_lib import run_train  # noqa: E402
 
 
+def _add_exp_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--exp",
+        choices=EXPERIMENTS,
+        default="daily",
+        help="experiment bucket under outputs/<exp>/",
+    )
+
+
 def _add_train_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--traj", type=Path, default=None, help="override trajectory csv")
     p.add_argument("--out-dir", type=Path, default=None, help="override models dir")
@@ -57,27 +66,25 @@ def main(argv: list[str] | None = None) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    ap.add_argument(
-        "--exp",
-        choices=EXPERIMENTS,
-        default="daily",
-        help="experiment bucket under outputs/<exp>/",
-    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_prep = sub.add_parser("prepare", help="build trajectories for --exp")
+    _add_exp_arg(p_prep)
     p_prep.add_argument("--data-dir", type=Path, default=None)
     p_prep.add_argument("--chunksize", type=int, default=200_000)
 
     p_train = sub.add_parser("train", help="train PatchTST for --exp")
+    _add_exp_arg(p_train)
     _add_train_args(p_train)
 
     p_plot = sub.add_parser("plot", help="LOVO figures for --exp")
+    _add_exp_arg(p_plot)
     p_plot.add_argument("--L", type=int, default=14)
     p_plot.add_argument("--H", type=int, default=7)
     p_plot.add_argument("--epochs", type=int, default=60)
 
     p_all = sub.add_parser("all", help="prepare → train → plot")
+    _add_exp_arg(p_all)
     p_all.add_argument("--data-dir", type=Path, default=None)
     p_all.add_argument("--chunksize", type=int, default=200_000)
     _add_train_args(p_all)

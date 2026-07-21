@@ -1,4 +1,4 @@
-"""LOVO prediction figures for an experiment."""
+"""LOVO prediction figures for an experiment run (L, H)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,13 +11,14 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .config import ACC_TOLS, ROOT, ensure_exp_dirs, figs_dir, traj_path
+from .config import ACC_TOLS, ROOT, ensure_exp_dirs, run_dir, run_tag, traj_path
 from .train_lib import accuracy_at, build_windows, predict, train_model
 
 
 def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> Path:
     ensure_exp_dirs(experiment)
-    fig_dir = figs_dir(experiment)
+    rdir = run_dir(experiment, L, H)
+    fig_dir = rdir / "figs"
     traj = traj_path(experiment)
     if not traj.exists():
         raise SystemExit(
@@ -30,6 +31,8 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
     time_col = "date" if "date" in df.columns else "ts"
     df[time_col] = pd.to_datetime(df[time_col])
     W = build_windows(df, L, H, time_col=time_col)
+    tag = run_tag(L, H)
+    print(f"[plot] exp={experiment} {tag} windows={len(W['y'])} → {fig_dir}")
 
     model_kw = dict(
         patch_len=4, stride=2, d_model=64, n_heads=4, n_layers=2, d_ff=128, dropout=0.1
@@ -78,7 +81,7 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
         ax.set_ylabel("SOH (%)")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, loc="best")
-    fig.suptitle(f"[{experiment}] LOVO SOH forecast (L={L}, H={H})", fontsize=13)
+    fig.suptitle(f"[{experiment} {tag}] LOVO SOH forecast", fontsize=13)
     fig.autofmt_xdate()
     fig.tight_layout()
     fig.savefig(fig_dir / "lovo_pred_timeseries.png", dpi=140, bbox_inches="tight")
@@ -98,7 +101,7 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
     ax.set_ylim(lo, hi)
     ax.set_xlabel("Actual SOH (%)")
     ax.set_ylabel("Predicted SOH (%)")
-    ax.set_title(f"[{experiment}] LOVO: Actual vs Predicted")
+    ax.set_title(f"[{experiment} {tag}] Actual vs Predicted")
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
@@ -136,19 +139,6 @@ def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> P
     fig.tight_layout()
     fig.savefig(fig_dir / "lovo_pred_accuracy.png", dpi=140, bbox_inches="tight")
     plt.close()
-
-    # README preview copy (daily only keeps docs/figs synced)
-    if experiment == "daily":
-        doc = ROOT / "docs" / "figs"
-        doc.mkdir(parents=True, exist_ok=True)
-        for name in (
-            "lovo_pred_timeseries.png",
-            "lovo_pred_scatter.png",
-            "lovo_pred_accuracy.png",
-        ):
-            src = fig_dir / name
-            if src.exists():
-                (doc / name).write_bytes(src.read_bytes())
 
     print(f"[plot][saved] {fig_dir}")
     return fig_dir
