@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train multivariate PatchTST for SOH forecasting on daily aicar trajectories.
+"""Train multivariate PatchTST for SOH forecasting on daily ev trajectories.
 
 Pipeline
 --------
@@ -341,7 +341,7 @@ def main():
     meta["H"] = args.H
     meta["holdout_device"] = args.holdout_device
 
-    stem = args.out_dir / f"aicar_L{args.L}_H{args.H}_patchtst"
+    stem = args.out_dir / f"ev_L{args.L}_H{args.H}_patchtst"
     torch.save(model.state_dict(), stem.with_suffix(".pt"))
     with open(stem.with_suffix(".json"), "w") as f:
         json.dump(meta, f, indent=2)
