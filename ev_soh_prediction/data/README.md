@@ -1,15 +1,18 @@
 # Raw BMS CSV (not in git)
 
-Place device CSV files here, e.g.:
+원본 CSV는 용량(~4.5GB) 때문에 **git에 올리지 않습니다** (`.gitignore`).
 
-- `01241225178.csv`
-- `01241225211.csv`
-- `01241225220.csv`
-- `01241225226.csv`
-
-These raw files are gitignored (large). After placing them, run:
+로컬에서는 `/data1/ev_soh_aicar/data/` 파일을 심볼릭 링크로 연결해 두었습니다.
 
 ```bash
-python scripts/build_trajectories.py
-python scripts/train_patchtst.py
+# 링크가 없으면 다시 연결
+ln -sfn /data1/ev_soh_aicar/data/*.csv ./
+```
+
+또는 CSV를 이 폴더에 직접 복사해도 됩니다.
+
+```bash
+python scripts/run.py prepare --exp daily
+python scripts/run.py train   --exp daily
+python scripts/run.py plot    --exp daily
 ```

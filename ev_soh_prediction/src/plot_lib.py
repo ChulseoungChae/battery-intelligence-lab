@@ -1,8 +1,6 @@
-#!/usr/bin/env python3
-"""Generate LOVO prediction figures under outputs/figs/."""
+"""LOVO prediction figures for an experiment."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -13,37 +11,32 @@ import numpy as np
 import pandas as pd
 import torch
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from scripts.train_patchtst import (  # noqa: E402
-    ACC_TOLS,
-    FEATURES,
-    accuracy_at,
-    build_windows,
-    predict,
-    train_model,
-)
-from src.patchtst import PatchTST  # noqa: E402
-
-FIG = ROOT / "outputs" / "figs"
-DOC = ROOT / "docs" / "figs"
+from .config import ACC_TOLS, ROOT, ensure_exp_dirs, figs_dir, traj_path
+from .train_lib import accuracy_at, build_windows, predict, train_model
 
 
-def main():
-    FIG.mkdir(parents=True, exist_ok=True)
+def run_plot(experiment: str, *, L: int = 14, H: int = 7, epochs: int = 60) -> Path:
+    ensure_exp_dirs(experiment)
+    fig_dir = figs_dir(experiment)
+    traj = traj_path(experiment)
+    if not traj.exists():
+        raise SystemExit(
+            f"Trajectory not found: {traj}\n"
+            f"Run: python scripts/run.py prepare --exp {experiment}"
+        )
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    df = pd.read_csv(ROOT / "outputs/traj/daily_trajectories.csv")
-    df["date"] = pd.to_datetime(df["date"])
-    L, H = 14, 7
-    W = build_windows(df, L, H)
+    df = pd.read_csv(traj)
+    time_col = "date" if "date" in df.columns else "ts"
+    df[time_col] = pd.to_datetime(df[time_col])
+    W = build_windows(df, L, H, time_col=time_col)
 
     model_kw = dict(
         patch_len=4, stride=2, d_model=64, n_heads=4, n_layers=2, d_ff=128, dropout=0.1
     )
     train_kw = dict(
         L=L,
-        epochs=60,
+        epochs=epochs,
         lr=1e-3,
         weight_decay=1e-4,
         batch_size=64,
@@ -72,7 +65,7 @@ def main():
     pred_df = pd.DataFrame(rows)
     pred_df["date"] = pd.to_datetime(pred_df["date"])
     pred_df = pred_df.sort_values(["device", "date"])
-    pred_df.to_csv(FIG / "lovo_predictions.csv", index=False)
+    pred_df.to_csv(fig_dir / "lovo_predictions.csv", index=False)
 
     devices = sorted(pred_df["device"].unique())
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -85,10 +78,10 @@ def main():
         ax.set_ylabel("SOH (%)")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, loc="best")
-    fig.suptitle(f"LOVO SOH forecast (L={L}, H={H} days)", fontsize=13)
+    fig.suptitle(f"[{experiment}] LOVO SOH forecast (L={L}, H={H})", fontsize=13)
     fig.autofmt_xdate()
     fig.tight_layout()
-    fig.savefig(FIG / "lovo_pred_timeseries.png", dpi=140, bbox_inches="tight")
+    fig.savefig(fig_dir / "lovo_pred_timeseries.png", dpi=140, bbox_inches="tight")
     plt.close()
 
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -105,12 +98,12 @@ def main():
     ax.set_ylim(lo, hi)
     ax.set_xlabel("Actual SOH (%)")
     ax.set_ylabel("Predicted SOH (%)")
-    ax.set_title("LOVO: Actual vs Predicted")
+    ax.set_title(f"[{experiment}] LOVO: Actual vs Predicted")
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(FIG / "lovo_pred_scatter.png", dpi=140, bbox_inches="tight")
+    fig.savefig(fig_dir / "lovo_pred_scatter.png", dpi=140, bbox_inches="tight")
     plt.close()
 
     err = (pred_df["y_pred"] - pred_df["y_true"]).abs()
@@ -141,20 +134,21 @@ def main():
     axes[1].legend(fontsize=8)
     axes[1].grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(FIG / "lovo_pred_accuracy.png", dpi=140, bbox_inches="tight")
+    fig.savefig(fig_dir / "lovo_pred_accuracy.png", dpi=140, bbox_inches="tight")
     plt.close()
 
-    DOC.mkdir(parents=True, exist_ok=True)
-    for name in (
-        "lovo_pred_timeseries.png",
-        "lovo_pred_scatter.png",
-        "lovo_pred_accuracy.png",
-    ):
-        src = FIG / name
-        if src.exists():
-            (DOC / name).write_bytes(src.read_bytes())
-    print(f"[saved] figures under {FIG} (and {DOC})")
+    # README preview copy (daily only keeps docs/figs synced)
+    if experiment == "daily":
+        doc = ROOT / "docs" / "figs"
+        doc.mkdir(parents=True, exist_ok=True)
+        for name in (
+            "lovo_pred_timeseries.png",
+            "lovo_pred_scatter.png",
+            "lovo_pred_accuracy.png",
+        ):
+            src = fig_dir / name
+            if src.exists():
+                (doc / name).write_bytes(src.read_bytes())
 
-
-if __name__ == "__main__":
-    main()
+    print(f"[plot][saved] {fig_dir}")
+    return fig_dir

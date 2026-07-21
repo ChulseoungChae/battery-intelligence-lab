@@ -1,24 +1,7 @@
-#!/usr/bin/env python3
-"""Train multivariate PatchTST for SOH forecasting on daily ev trajectories.
-
-Pipeline
---------
-1) Load outputs/traj/daily_trajectories.csv (run build_trajectories.py first)
-2) Build sliding windows: past L days of FEATURES → ΔSOH over horizon H
-3) Leave-One-Vehicle-Out evaluation vs hold-last baseline
-4) Fit final model on all vehicles (or --holdout-device) and save .pt/.json
-
-Example
--------
-    python scripts/build_trajectories.py
-    python scripts/train_patchtst.py
-    python scripts/train_patchtst.py --L 14 --H 7 --epochs 80
-"""
+"""PatchTST training / LOVO evaluation helpers."""
 from __future__ import annotations
 
-import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -27,38 +10,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from src.patchtst import PatchTST  # noqa: E402
-
-TRAJ_PATH = ROOT / "outputs" / "traj" / "daily_trajectories.csv"
-MODEL_DIR = ROOT / "outputs" / "models"
-
-# Input channels (includes soh itself for forecasting context)
-FEATURES = [
-    "soh",
-    "odometer",
-    "chg_mode",
-    "chrg_cnt",
-    "chrg_cnt_q",
-    "cumul_current_dischrgd",
-    "cumul_pw_chrgd",
-    "cumul_energy_chrgd_q",
-    "op_time",
-    "mod_min_temp",
-    "mod_max_temp",
-    "batt_coolant_inlet_temp",
-    "ext_temp",
-    "pack_current",
-    "pack_volt",
-    "acceptable_chrg_pw",
-    "cell_volt_mean",
-]
-
-
-# Tolerance bands for "accuracy": |pred - true| <= tol  (SOH percentage points)
-ACC_TOLS = (0.5, 1.0, 2.0)
+from .config import ACC_TOLS, FEATURES, ensure_exp_dirs, models_dir, traj_path
+from .patchtst import PatchTST
 
 
 def mae(y_true, y_pred) -> float:
@@ -66,16 +19,14 @@ def mae(y_true, y_pred) -> float:
 
 
 def accuracy_at(y_true, y_pred, tol: float) -> float:
-    """Fraction of predictions within ±tol SOH points (0~100%)."""
     err = np.abs(np.asarray(y_pred, float) - np.asarray(y_true, float))
     return float(np.mean(err <= tol) * 100.0)
 
 
 def metrics_dict(y_true, y_pred, prefix: str = "") -> dict:
-    """MAE + Acc@0.5/1.0/2.0 (%)."""
     out = {f"{prefix}mae": mae(y_true, y_pred)}
     for tol in ACC_TOLS:
-        key = f"{prefix}acc_{str(tol).replace('.', 'p')}"  # acc_0p5, acc_1p0, ...
+        key = f"{prefix}acc_{str(tol).replace('.', 'p')}"
         out[key] = accuracy_at(y_true, y_pred, tol)
     return out
 
@@ -92,16 +43,15 @@ def fill_series(s: pd.Series) -> np.ndarray:
     return x.values.astype(np.float32)
 
 
-def build_windows(df: pd.DataFrame, L: int, H: int) -> dict:
-    """Return arrays: X (N,L,F), y_abs, last, vid, date_end."""
+def build_windows(df: pd.DataFrame, L: int, H: int, time_col: str = "date") -> dict:
     xs, ys, lasts, vids, dates = [], [], [], [], []
     for vid, g in df.groupby("device_no"):
-        g = g.sort_values("date").reset_index(drop=True)
+        g = g.sort_values(time_col).reset_index(drop=True)
         if len(g) < L + H:
             continue
         chans = {c: fill_series(g[c]) for c in FEATURES}
         soh = chans["soh"]
-        mat = np.stack([chans[c] for c in FEATURES], axis=1)  # (T, F)
+        mat = np.stack([chans[c] for c in FEATURES], axis=1)
         for i in range(L - 1, len(g) - H):
             sl = slice(i - L + 1, i + 1)
             j = i + H
@@ -109,7 +59,7 @@ def build_windows(df: pd.DataFrame, L: int, H: int) -> dict:
             lasts.append(float(soh[i]))
             ys.append(float(soh[j]))
             vids.append(str(vid))
-            dates.append(str(g.loc[i, "date"])[:10])
+            dates.append(str(g.loc[i, time_col])[:10])
     if not xs:
         raise RuntimeError("No windows — check L/H vs trajectory length")
     return dict(
@@ -192,7 +142,7 @@ def predict(model, X, last, meta, device) -> np.ndarray:
     return last + pred_delta
 
 
-def leave_one_vehicle_out(W: dict, args, device) -> None:
+def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFrame | None:
     vids = np.unique(W["vid"])
     print(f"\n[LOVO] devices={list(vids)}  L={args.L} H={args.H} windows={len(W['y'])}")
     rows = []
@@ -228,7 +178,6 @@ def leave_one_vehicle_out(W: dict, args, device) -> None:
         hl = W["last"][te]
         m = metrics_dict(y, pred)
         h = metrics_dict(y, hl, prefix="hl_")
-        # Prefer Acc@±1.0 for pass/fail vs hold-last; MAE margin kept for reference
         acc_margin = m["acc_1p0"] - h["hl_acc_1p0"]
         row = dict(test_device=te_vid, n_test=int(te.sum()), **m, **h)
         row["acc_1p0_margin"] = acc_margin
@@ -243,81 +192,70 @@ def leave_one_vehicle_out(W: dict, args, device) -> None:
             f"Acc@±2.0 {h['hl_acc_2p0']:.1f}% | MAE {h['hl_mae']:.4f}\n"
             f"    Acc@±1.0 margin {acc_margin:+.1f}%p {flag}"
         )
-    if rows:
-        summary = pd.DataFrame(rows)
-        print(
-            f"  mean Acc@±0.5 {summary['acc_0p5'].mean():.1f}% "
-            f"(hl {summary['hl_acc_0p5'].mean():.1f}%) | "
-            f"Acc@±1.0 {summary['acc_1p0'].mean():.1f}% "
-            f"(hl {summary['hl_acc_1p0'].mean():.1f}%) | "
-            f"Acc@±2.0 {summary['acc_2p0'].mean():.1f}% "
-            f"(hl {summary['hl_acc_2p0'].mean():.1f}%)"
-        )
-        summary.to_csv(MODEL_DIR / "lovo_metrics.csv", index=False)
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--traj", type=Path, default=TRAJ_PATH)
-    ap.add_argument("--out-dir", type=Path, default=MODEL_DIR)
-    ap.add_argument("--L", type=int, default=14, help="lookback days")
-    ap.add_argument("--H", type=int, default=7, help="forecast horizon days")
-    ap.add_argument("--epochs", type=int, default=60)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--weight-decay", type=float, default=1e-4)
-    ap.add_argument("--batch-size", type=int, default=64)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--patch-len", type=int, default=4)
-    ap.add_argument("--stride", type=int, default=2)
-    ap.add_argument("--d-model", type=int, default=64)
-    ap.add_argument("--n-heads", type=int, default=4)
-    ap.add_argument("--n-layers", type=int, default=2)
-    ap.add_argument("--d-ff", type=int, default=128)
-    ap.add_argument("--dropout", type=float, default=0.1)
-    ap.add_argument(
-        "--holdout-device",
-        type=str,
-        default=None,
-        help="If set, exclude this device from final fit (kept for eval only)",
+    if not rows:
+        return None
+    summary = pd.DataFrame(rows)
+    print(
+        f"  mean Acc@±0.5 {summary['acc_0p5'].mean():.1f}% "
+        f"(hl {summary['hl_acc_0p5'].mean():.1f}%) | "
+        f"Acc@±1.0 {summary['acc_1p0'].mean():.1f}% "
+        f"(hl {summary['hl_acc_1p0'].mean():.1f}%) | "
+        f"Acc@±2.0 {summary['acc_2p0'].mean():.1f}% "
+        f"(hl {summary['hl_acc_2p0'].mean():.1f}%)"
     )
-    ap.add_argument("--skip-lovo", action="store_true")
-    ap.add_argument("--cpu", action="store_true")
-    args = ap.parse_args()
+    metrics_csv.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(metrics_csv, index=False)
+    return summary
 
-    if not args.traj.exists():
+
+def run_train(experiment: str, args) -> Path:
+    ensure_exp_dirs(experiment)
+    traj = Path(args.traj) if args.traj else traj_path(experiment)
+    out_dir = Path(args.out_dir) if args.out_dir else models_dir(experiment)
+
+    if not traj.exists():
         raise SystemExit(
-            f"Trajectory not found: {args.traj}\n"
-            f"Run: python scripts/build_trajectories.py"
+            f"Trajectory not found: {traj}\n"
+            f"Run: python scripts/run.py prepare --exp {experiment}"
         )
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(
         "cpu" if args.cpu or not torch.cuda.is_available() else "cuda"
     )
-    print(f"device={device}")
+    print(f"[train] exp={experiment} device={device} traj={traj}")
 
-    df = pd.read_csv(args.traj)
-    df["date"] = pd.to_datetime(df["date"])
+    df = pd.read_csv(traj)
+    time_col = "date" if "date" in df.columns else "ts"
+    df[time_col] = pd.to_datetime(df[time_col])
     for c in FEATURES:
         if c not in df.columns:
             raise KeyError(f"Missing feature column: {c}")
     print(
         f"traj rows={len(df)} devices={df['device_no'].nunique()} "
-        f"span={df['date'].min().date()}~{df['date'].max().date()}"
+        f"span={df[time_col].min().date()}~{df[time_col].max().date()}"
     )
 
-    W = build_windows(df, args.L, args.H)
+    W = build_windows(df, args.L, args.H, time_col=time_col)
     print(f"windows={len(W['y'])}  X={W['X'].shape}")
 
     if not args.skip_lovo:
-        leave_one_vehicle_out(W, args, device)
+        leave_one_vehicle_out(W, args, device, out_dir / "lovo_metrics.csv")
 
-    # Final fit
     mask = np.ones(len(W["y"]), dtype=bool)
     if args.holdout_device:
         mask = W["vid"] != str(args.holdout_device)
         print(f"[final] holdout={args.holdout_device} train_windows={mask.sum()}")
     y_delta = W["y"][mask] - W["last"][mask]
+    model_kw = dict(
+        patch_len=args.patch_len,
+        stride=args.stride,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        d_ff=args.d_ff,
+        dropout=args.dropout,
+    )
     model, meta = train_model(
         W["X"][mask],
         y_delta,
@@ -327,33 +265,22 @@ def main():
         weight_decay=args.weight_decay,
         batch_size=args.batch_size,
         seed=args.seed,
-        model_kw=dict(
-            patch_len=args.patch_len,
-            stride=args.stride,
-            d_model=args.d_model,
-            n_heads=args.n_heads,
-            n_layers=args.n_layers,
-            d_ff=args.d_ff,
-            dropout=args.dropout,
-        ),
+        model_kw=model_kw,
         device=device,
     )
     meta["H"] = args.H
     meta["holdout_device"] = args.holdout_device
+    meta["experiment"] = experiment
 
-    stem = args.out_dir / f"ev_L{args.L}_H{args.H}_patchtst"
+    stem = out_dir / f"ev_L{args.L}_H{args.H}_patchtst"
     torch.save(model.state_dict(), stem.with_suffix(".pt"))
     with open(stem.with_suffix(".json"), "w") as f:
         json.dump(meta, f, indent=2)
     print(f"[saved] {stem.with_suffix('.pt')}")
     print(f"[saved] {stem.with_suffix('.json')}")
 
-    # quick train-set sanity
     pred = predict(model, W["X"][mask], W["last"][mask], meta, device)
     y_tr, hl_tr = W["y"][mask], W["last"][mask]
     print(f"[train] {fmt_acc_line(y_tr, pred, 'model')}")
     print(f"[train] {fmt_acc_line(y_tr, hl_tr, 'hold-last')}")
-
-
-if __name__ == "__main__":
-    main()
+    return stem.with_suffix(".pt")

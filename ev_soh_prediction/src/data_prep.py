@@ -1,50 +1,15 @@
-#!/usr/bin/env python3
-"""Raw BMS CSV → daily multivariate trajectories for PatchTST.
-
-Reads ./data/*.csv, aggregates per (device_no, date), computes cell_volt_mean
-from cell_volt_list, and writes outputs/traj/daily_trajectories.csv
-"""
+"""Trajectory preparation for each experiment mode."""
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data"
-OUT_PATH = ROOT / "outputs" / "traj" / "daily_trajectories.csv"
-
-# Counters / levels: take max within day
-MAX_COLS = [
-    "odometer",
-    "chrg_cnt",
-    "chrg_cnt_q",
-    "cumul_current_dischrgd",
-    "cumul_pw_chrgd",
-    "cumul_energy_chrgd_q",
-    "op_time",
-]
-# Means within day
-MEAN_COLS = [
-    "mod_min_temp",
-    "mod_max_temp",
-    "batt_coolant_inlet_temp",
-    "ext_temp",
-    "pack_current",
-    "pack_volt",
-    "acceptable_chrg_pw",
-]
-USECOLS = (
-    ["device_no", "msg_time", "time", "soh", "cell_volt_list", "chg_mode"]
-    + MAX_COLS
-    + MEAN_COLS
-)
+from .config import DATA_DIR, MAX_COLS, MEAN_COLS, USECOLS, ensure_exp_dirs, traj_path
 
 
 def _cell_volt_mean(series: pd.Series) -> np.ndarray:
-    """Fast mean over comma-separated cell voltages."""
     out = np.empty(len(series), dtype=np.float64)
     vals = series.to_numpy()
     for i, v in enumerate(vals):
@@ -64,7 +29,7 @@ def _pick_time(df: pd.DataFrame) -> pd.Series:
     return pd.to_datetime(df.get("time"), errors="coerce")
 
 
-def aggregate_chunk(chunk: pd.DataFrame, volt_stride: int = 10) -> pd.DataFrame:
+def _aggregate_daily_chunk(chunk: pd.DataFrame, volt_stride: int = 10) -> pd.DataFrame:
     chunk = chunk.copy()
     chunk["ts"] = _pick_time(chunk)
     chunk = chunk.dropna(subset=["ts"])
@@ -76,16 +41,12 @@ def aggregate_chunk(chunk: pd.DataFrame, volt_stride: int = 10) -> pd.DataFrame:
     for c in MAX_COLS + MEAN_COLS:
         chunk[c] = pd.to_numeric(chunk[c], errors="coerce")
 
-    # chg_mode: slow=0, fast=1 → 일별 평균 = 급속 비율 (0~1)
     mode = chunk["chg_mode"].astype(str).str.lower()
     chunk["chg_mode"] = mode.map({"slow": 0.0, "fast": 1.0}).fillna(0.0)
 
-    # cell voltages change slowly within a day — subsample for speed
     volt = chunk.iloc[:: max(1, volt_stride)][["device_no", "date", "cell_volt_list"]].copy()
     volt["cell_volt_mean"] = _cell_volt_mean(volt["cell_volt_list"])
-    volt_daily = (
-        volt.groupby(["device_no", "date"], as_index=False)["cell_volt_mean"].mean()
-    )
+    volt_daily = volt.groupby(["device_no", "date"], as_index=False)["cell_volt_mean"].mean()
 
     agg = {
         "soh": "median",
@@ -96,18 +57,22 @@ def aggregate_chunk(chunk: pd.DataFrame, volt_stride: int = 10) -> pd.DataFrame:
     }
     g = chunk.groupby(["device_no", "date"], as_index=False).agg(agg)
     g = g.rename(columns={"ts": "n_rows"})
-    g = g.merge(volt_daily, on=["device_no", "date"], how="left")
-    return g
+    return g.merge(volt_daily, on=["device_no", "date"], how="left")
 
 
-def build(data_dir: Path, out_path: Path, chunksize: int = 200_000) -> pd.DataFrame:
+def prepare_daily(data_dir: Path | None = None, chunksize: int = 200_000) -> Path:
+    """일별 압축 궤적 → outputs/daily/traj/trajectories.csv"""
+    data_dir = data_dir or DATA_DIR
+    ensure_exp_dirs("daily")
+    out = traj_path("daily")
+
     files = sorted(data_dir.glob("*.csv"))
     if not files:
         raise FileNotFoundError(f"No CSV in {data_dir}")
 
     parts: list[pd.DataFrame] = []
     for path in files:
-        print(f"[read] {path.name}", flush=True)
+        print(f"[daily][read] {path.name}", flush=True)
         n = 0
         for chunk in pd.read_csv(
             path,
@@ -115,18 +80,15 @@ def build(data_dir: Path, out_path: Path, chunksize: int = 200_000) -> pd.DataFr
             chunksize=chunksize,
             low_memory=False,
         ):
-            missing = [c for c in USECOLS if c not in chunk.columns and c != "msg_time"]
-            # msg_time optional if time exists
             if "cell_volt_list" not in chunk.columns:
                 raise KeyError(f"{path.name}: cell_volt_list missing")
-            parts.append(aggregate_chunk(chunk))
+            parts.append(_aggregate_daily_chunk(chunk))
             n += len(chunk)
             if n % 1_000_000 < chunksize:
                 print(f"  rows≈{n:,}", flush=True)
         print(f"  done {path.name}", flush=True)
 
     daily = pd.concat(parts, ignore_index=True)
-    # Re-aggregate in case same (device, date) spanned chunks/files
     final_agg = {
         "soh": "median",
         "chg_mode": "mean",
@@ -141,21 +103,41 @@ def build(data_dir: Path, out_path: Path, chunksize: int = 200_000) -> pd.DataFr
         .sort_values(["device_no", "date"])
         .reset_index(drop=True)
     )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    daily.to_csv(out_path, index=False)
-    print(f"[saved] {out_path}  rows={len(daily)}  devices={daily['device_no'].nunique()}")
+    daily.to_csv(out, index=False)
+    print(f"[daily][saved] {out}  rows={len(daily)}  devices={daily['device_no'].nunique()}")
     print(daily.groupby("device_no")["soh"].agg(["min", "mean", "max", "count"]).round(3))
-    return daily
+    return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data-dir", type=Path, default=DATA_DIR)
-    ap.add_argument("--out", type=Path, default=OUT_PATH)
-    ap.add_argument("--chunksize", type=int, default=200_000)
-    args = ap.parse_args()
-    build(args.data_dir, args.out, args.chunksize)
+def prepare_session(data_dir: Path | None = None) -> Path:
+    """세션/고해상도 궤적 (일별 압축 없음) — 구현 예정."""
+    ensure_exp_dirs("session")
+    raise NotImplementedError(
+        "session 실험은 아직 미구현입니다. "
+        "outputs/session/ 아래에 궤적을 넣는 prepare 로직을 추가하세요."
+    )
 
 
-if __name__ == "__main__":
-    main()
+def prepare_by_chg_mode(data_dir: Path | None = None) -> Path:
+    """충전 방식(slow/fast) 분리 궤적 — 구현 예정."""
+    ensure_exp_dirs("by_chg_mode")
+    (ensure_exp_dirs("by_chg_mode") / "slow").mkdir(exist_ok=True)
+    (ensure_exp_dirs("by_chg_mode") / "fast").mkdir(exist_ok=True)
+    raise NotImplementedError(
+        "by_chg_mode 실험은 아직 미구현입니다. "
+        "slow/fast 각각 outputs/by_chg_mode/{slow,fast}/traj/ 에 저장하도록 구현하세요."
+    )
+
+
+PREPARE_FN = {
+    "daily": prepare_daily,
+    "session": prepare_session,
+    "by_chg_mode": prepare_by_chg_mode,
+}
+
+
+def prepare(experiment: str, data_dir: Path | None = None, chunksize: int = 200_000) -> Path:
+    fn = PREPARE_FN[experiment]
+    if experiment == "daily":
+        return fn(data_dir=data_dir, chunksize=chunksize)  # type: ignore[call-arg]
+    return fn(data_dir=data_dir)  # type: ignore[call-arg]
