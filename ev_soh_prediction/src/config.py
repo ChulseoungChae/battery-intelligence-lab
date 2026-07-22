@@ -93,7 +93,7 @@ def ensure_exp_dirs(name: str, mode: str | None = None) -> Path:
             ensure_exp_dirs(name, m)
         return exp_dir(name)
     d = mode_dir(name, mode)
-    for sub in ("traj", "models", "figs", "runs"):
+    for sub in ("traj", "runs"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     return d
 

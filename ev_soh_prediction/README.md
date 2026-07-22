@@ -130,7 +130,6 @@ ev_soh_prediction/
   scripts/
     run_daily.py                # 일별 압축 CLI (daily / by_chg_mode)
     run_raw.py                  # 로우 비압축 CLI
-    run.py                      # deprecated (위 둘로 안내)
   src/
     config.py                   # FEATURES, 실험 경로
     data_prep.py                # prepare_daily / prepare_by_chg_mode / prepare_raw
