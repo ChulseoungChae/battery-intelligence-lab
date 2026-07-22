@@ -63,6 +63,17 @@ def _add_train_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--holdout-device", type=str, default=None)
     p.add_argument("--skip-lovo", action="store_true")
     p.add_argument("--cpu", action="store_true")
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print per-epoch train L1 loss (LOVO folds + final)",
+    )
+    p.add_argument(
+        "--log-every",
+        type=int,
+        default=10,
+        help="with --verbose, print every N epochs (always prints first/last)",
+    )
 
 
 def _modes_to_run(exp: str, mode: str | None) -> list[str | None]:

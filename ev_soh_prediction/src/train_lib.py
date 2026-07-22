@@ -118,6 +118,9 @@ def train_model(
     seed: int,
     model_kw: dict,
     device: torch.device,
+    verbose: bool = False,
+    log_every: int = 1,
+    log_prefix: str = "",
 ):
     mus, sds, mu_t, sd_t = standardize_fit(X, y_delta)
     Xn, yn = apply_std(X, y_delta, mus, sds, mu_t, sd_t)
@@ -131,13 +134,28 @@ def train_model(
     ds = TensorDataset(torch.from_numpy(Xn), torch.from_numpy(yn.astype(np.float32)))
     loader = DataLoader(ds, batch_size=min(batch_size, len(ds)), shuffle=True)
 
+    if verbose:
+        print(
+            f"{log_prefix}[train_model] n={len(ds)} batches={len(loader)} "
+            f"epochs={epochs} device={device}",
+            flush=True,
+        )
+
     model.train()
-    for _ in range(epochs):
+    every = max(1, int(log_every))
+    for ep in range(1, epochs + 1):
+        total, n = 0.0, 0
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             opt.zero_grad()
-            loss_fn(model(xb), yb).backward()
+            pred = model(xb)
+            loss = loss_fn(pred, yb)
+            loss.backward()
             opt.step()
+            total += float(loss.item()) * len(xb)
+            n += len(xb)
+        if verbose and (ep == 1 or ep == epochs or ep % every == 0):
+            print(f"{log_prefix}  epoch {ep:4d}/{epochs}  train_L1={total / max(n, 1):.6f}", flush=True)
 
     meta = dict(
         features=FEATURES,
@@ -177,6 +195,7 @@ def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFr
             print(f"  skip {te_vid}: train windows {tr.sum()}")
             continue
         y_delta = W["y"][tr] - W["last"][tr]
+        verbose = bool(getattr(args, "verbose", False))
         model, meta = train_model(
             W["X"][tr],
             y_delta,
@@ -196,6 +215,9 @@ def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFr
                 dropout=args.dropout,
             ),
             device=device,
+            verbose=verbose,
+            log_every=int(getattr(args, "log_every", 10) or 10),
+            log_prefix=f"  [LOVO test={te_vid}] ",
         )
         pred = predict(model, W["X"][te], W["last"][te], meta, device)
         y = W["y"][te]
@@ -302,6 +324,9 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
         seed=args.seed,
         model_kw=model_kw,
         device=device,
+        verbose=bool(getattr(args, "verbose", False)),
+        log_every=int(getattr(args, "log_every", 10) or 10),
+        log_prefix="[final] ",
     )
     meta["H"] = args.H
     meta["holdout_device"] = args.holdout_device
