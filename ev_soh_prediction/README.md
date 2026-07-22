@@ -120,7 +120,6 @@ ev_soh_prediction/
       slow|fast/
         traj/trajectories.csv
         runs/L30_H7/{models,figs}/
-  docs/figs/
   requirements.txt
   README.md
 ```
