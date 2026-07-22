@@ -14,6 +14,7 @@ from .config import (
     MEAN_COLS,
     USECOLS,
     ensure_exp_dirs,
+    save_raw_traj_meta,
     traj_path,
 )
 
@@ -236,7 +237,9 @@ def prepare_raw(
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     traj.to_csv(out, index=False)
+    meta_path = save_raw_traj_meta(row_stride)
     print(f"[raw][saved] {out}  rows={len(traj)}  devices={traj['device_no'].nunique()}")
+    print(f"[raw][meta] {meta_path}  row_stride={row_stride}")
     print(traj.groupby("device_no")["soh"].agg(["min", "mean", "max", "count"]).round(3))
     return out
 

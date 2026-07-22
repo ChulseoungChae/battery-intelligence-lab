@@ -31,6 +31,15 @@ from src.train_lib import run_train  # noqa: E402
 EXP = "raw"
 
 
+def _add_row_stride_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--row-stride",
+        type=int,
+        default=None,
+        help="must match prepare; default: outputs/raw/traj/meta.json",
+    )
+
+
 def _add_train_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--traj", type=Path, default=None)
     p.add_argument("--out-dir", type=Path, default=None)
@@ -69,6 +78,7 @@ def _add_train_args(p: argparse.ArgumentParser) -> None:
         default=10,
         help="with --verbose, print every N epochs (always prints first/last)",
     )
+    _add_row_stride_arg(p)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -99,6 +109,7 @@ def main(argv: list[str] | None = None) -> None:
     p_plot.add_argument("--epochs", type=int, default=40)
     p_plot.add_argument("--patch-len", type=int, default=10)
     p_plot.add_argument("--stride", type=int, default=5)
+    _add_row_stride_arg(p_plot)
 
     p_all = sub.add_parser("all", help="prepare → train → plot")
     p_all.add_argument("--data-dir", type=Path, default=None)
@@ -125,6 +136,7 @@ def main(argv: list[str] | None = None) -> None:
             win_step=args.win_step,
             patch_len=args.patch_len,
             stride=args.stride,
+            row_stride=args.row_stride,
         )
     elif args.cmd == "all":
         prepare_raw(
@@ -141,6 +153,7 @@ def main(argv: list[str] | None = None) -> None:
             win_step=args.win_step,
             patch_len=args.patch_len,
             stride=args.stride,
+            row_stride=args.row_stride,
         )
     else:
         ap.error(f"unknown command {args.cmd}")

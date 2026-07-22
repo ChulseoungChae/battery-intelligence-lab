@@ -10,7 +10,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .config import ACC_TOLS, FEATURES, ensure_exp_dirs, run_dir, traj_path
+from .config import (
+    ACC_TOLS,
+    FEATURES,
+    ensure_exp_dirs,
+    read_raw_traj_meta,
+    resolve_raw_row_stride,
+    run_dir,
+    traj_path,
+)
 from .patchtst import PatchTST
 
 
@@ -261,7 +269,18 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
 
     ensure_exp_dirs(experiment, mode)
     traj = Path(args.traj) if args.traj else traj_path(experiment, mode)
-    rdir = run_dir(experiment, args.L, args.H, mode=mode)
+    row_stride = None
+    if experiment == "raw":
+        row_stride = resolve_raw_row_stride(getattr(args, "row_stride", None))
+        meta = read_raw_traj_meta()
+        if meta and "row_stride" in meta:
+            stored = int(meta["row_stride"])
+            if getattr(args, "row_stride", None) is not None and stored != row_stride:
+                print(
+                    f"[warn] --row-stride={row_stride} differs from "
+                    f"traj meta ({stored}); run folder uses CLI value"
+                )
+    rdir = run_dir(experiment, args.L, args.H, mode=mode, row_stride=row_stride)
     out_dir = Path(args.out_dir) if args.out_dir else (rdir / "models")
 
     if not traj.exists():
@@ -278,7 +297,11 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     )
     tag = f" mode={mode}" if mode else ""
     win_step = int(getattr(args, "win_step", 1) or 1)
-    print(f"[train] exp={experiment}{tag} L={args.L} H={args.H} win_step={win_step} device={device}")
+    stride_s = f" row_stride={row_stride}" if row_stride is not None else ""
+    print(
+        f"[train] exp={experiment}{tag} L={args.L} H={args.H} "
+        f"win_step={win_step}{stride_s} device={device}"
+    )
     print(f"[train] traj={traj}")
     print(f"[train] out={out_dir}")
 
@@ -332,6 +355,8 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     meta["holdout_device"] = args.holdout_device
     meta["experiment"] = experiment
     meta["mode"] = mode
+    if row_stride is not None:
+        meta["row_stride"] = row_stride
 
     stem = out_dir / f"ev_L{args.L}_H{args.H}_patchtst"
     torch.save(model.state_dict(), stem.with_suffix(".pt"))

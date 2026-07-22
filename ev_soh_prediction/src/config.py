@@ -7,6 +7,7 @@ raw                 : 일별 압축 없음(로우) → scripts/run_raw.py
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,35 @@ def traj_path(name: str, mode: str | None = None) -> Path:
     return mode_dir(name, mode) / "traj" / "trajectories.csv"
 
 
+def raw_traj_meta_path() -> Path:
+    return traj_path("raw").parent / "meta.json"
+
+
+def save_raw_traj_meta(row_stride: int) -> Path:
+    p = raw_traj_meta_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w") as f:
+        json.dump({"row_stride": max(1, int(row_stride))}, f, indent=2)
+    return p
+
+
+def read_raw_traj_meta() -> dict | None:
+    p = raw_traj_meta_path()
+    if not p.exists():
+        return None
+    with open(p) as f:
+        return json.load(f)
+
+
+def resolve_raw_row_stride(row_stride: int | None = None, default: int = 100) -> int:
+    if row_stride is not None:
+        return max(1, int(row_stride))
+    meta = read_raw_traj_meta()
+    if meta and "row_stride" in meta:
+        return max(1, int(meta["row_stride"]))
+    return default
+
+
 def ensure_exp_dirs(name: str, mode: str | None = None) -> Path:
     if name == "by_chg_mode" and mode is None:
         for m in CHG_MODES:
@@ -98,14 +128,24 @@ def ensure_exp_dirs(name: str, mode: str | None = None) -> Path:
     return d
 
 
-def run_tag(L: int, H: int) -> str:
+def run_tag(L: int, H: int, *, row_stride: int | None = None) -> str:
+    if row_stride is not None:
+        return f"stride{row_stride}_L{L}_H{H}"
     return f"L{L}_H{H}"
 
 
-def run_dir(experiment: str, L: int, H: int, mode: str | None = None) -> Path:
-    """outputs/<exp>[/mode]/runs/L{L}_H{H}/"""
+def run_dir(
+    experiment: str,
+    L: int,
+    H: int,
+    mode: str | None = None,
+    *,
+    row_stride: int | None = None,
+) -> Path:
+    """outputs/<exp>[/mode]/runs/[stride{S}_]L{L}_H{H}/"""
     ensure_exp_dirs(experiment, mode)
-    d = mode_dir(experiment, mode) / "runs" / run_tag(L, H)
+    rs = row_stride if experiment == "raw" else None
+    d = mode_dir(experiment, mode) / "runs" / run_tag(L, H, row_stride=rs)
     for sub in ("models", "figs"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     return d

@@ -11,7 +11,15 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .config import ACC_TOLS, ROOT, ensure_exp_dirs, run_dir, run_tag, traj_path
+from .config import (
+    ACC_TOLS,
+    ROOT,
+    ensure_exp_dirs,
+    resolve_raw_row_stride,
+    run_dir,
+    run_tag,
+    traj_path,
+)
 from .train_lib import accuracy_at, build_windows, predict, train_model
 
 
@@ -25,13 +33,15 @@ def run_plot(
     win_step: int = 1,
     patch_len: int = 4,
     stride: int = 2,
+    row_stride: int | None = None,
     max_plot_points: int = 2500,
 ) -> Path:
     if experiment == "by_chg_mode" and mode is None:
         raise SystemExit("by_chg_mode requires --mode slow|fast")
 
     ensure_exp_dirs(experiment, mode)
-    rdir = run_dir(experiment, L, H, mode=mode)
+    rs = resolve_raw_row_stride(row_stride) if experiment == "raw" else None
+    rdir = run_dir(experiment, L, H, mode=mode, row_stride=rs)
     fig_dir = rdir / "figs"
     traj = traj_path(experiment, mode)
     if not traj.exists():
@@ -47,7 +57,7 @@ def run_plot(
     time_col = "date" if "date" in df.columns else "ts"
     df[time_col] = pd.to_datetime(df[time_col])
     W = build_windows(df, L, H, time_col=time_col, win_step=max(1, int(win_step)))
-    tag = run_tag(L, H)
+    tag = run_tag(L, H, row_stride=rs)
     mode_s = f"/{mode}" if mode else ""
     print(f"[plot] exp={experiment}{mode_s} {tag} windows={len(W['y'])} → {fig_dir}")
 
