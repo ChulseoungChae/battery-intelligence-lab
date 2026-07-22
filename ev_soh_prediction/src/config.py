@@ -1,10 +1,9 @@
 """Experiment config and output paths.
 
-Experiments
------------
-daily       : 일별 집계 궤적
-session     : 일별 압축 없이 세션/고해상도 궤적 (예정)
-by_chg_mode : 충전 방식(slow/fast) 분리 학습
+Two execution tracks
+--------------------
+daily / by_chg_mode : 일별 압축 궤적  → scripts/run_daily.py
+raw                 : 일별 압축 없음(로우) → scripts/run_raw.py
 """
 from __future__ import annotations
 
@@ -14,7 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 OUTPUTS_ROOT = ROOT / "outputs"
 
-EXPERIMENTS = ("daily", "session", "by_chg_mode")
+# daily track
+DAILY_EXPERIMENTS = ("daily", "by_chg_mode")
+# raw track
+RAW_EXPERIMENTS = ("raw",)
+EXPERIMENTS = DAILY_EXPERIMENTS + RAW_EXPERIMENTS
 CHG_MODES = ("slow", "fast")
 
 FEATURES = [
@@ -86,7 +89,6 @@ def traj_path(name: str, mode: str | None = None) -> Path:
 
 def ensure_exp_dirs(name: str, mode: str | None = None) -> Path:
     if name == "by_chg_mode" and mode is None:
-        # create both mode trees
         for m in CHG_MODES:
             ensure_exp_dirs(name, m)
         return exp_dir(name)

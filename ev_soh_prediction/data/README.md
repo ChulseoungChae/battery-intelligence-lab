@@ -12,7 +12,11 @@ ln -sfn /data1/ev_soh_aicar/data/*.csv ./
 또는 CSV를 이 폴더에 직접 복사해도 됩니다.
 
 ```bash
-python scripts/run.py prepare --exp daily
-python scripts/run.py train   --exp daily
-python scripts/run.py plot    --exp daily
+# 일별 압축
+python scripts/run_daily.py prepare --exp daily
+python scripts/run_daily.py train   --exp daily --L 14 --H 7
+
+# 로우 비압축
+python scripts/run_raw.py prepare --row-stride 100
+python scripts/run_raw.py train   --L 100 --H 1
 ```

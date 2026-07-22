@@ -1,4 +1,4 @@
-"""Trajectory preparation for each experiment mode."""
+"""Trajectory preparation for daily / by_chg_mode / raw."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,6 +9,7 @@ import pandas as pd
 from .config import (
     CHG_MODES,
     DATA_DIR,
+    FEATURES,
     MAX_COLS,
     MEAN_COLS,
     USECOLS,
@@ -104,7 +105,7 @@ def _finalize_daily(parts: list[pd.DataFrame], out: Path, label: str) -> Path:
     return out
 
 
-def _build_from_files(
+def _build_daily_from_files(
     data_dir: Path,
     out: Path,
     label: str,
@@ -141,15 +142,7 @@ def prepare_daily(data_dir: Path | None = None, chunksize: int = 200_000) -> Pat
     """일별 압축 궤적 → outputs/daily/traj/trajectories.csv"""
     data_dir = data_dir or DATA_DIR
     ensure_exp_dirs("daily")
-    return _build_from_files(data_dir, traj_path("daily"), "daily", chunksize)
-
-
-def prepare_session(data_dir: Path | None = None) -> Path:
-    ensure_exp_dirs("session")
-    raise NotImplementedError(
-        "session 실험은 아직 미구현입니다. "
-        "outputs/session/ 아래에 궤적을 넣는 prepare 로직을 추가하세요."
-    )
+    return _build_daily_from_files(data_dir, traj_path("daily"), "daily", chunksize)
 
 
 def prepare_by_chg_mode(
@@ -166,21 +159,107 @@ def prepare_by_chg_mode(
             raise ValueError(f"unknown mode {mode}")
         ensure_exp_dirs("by_chg_mode", mode)
         out = traj_path("by_chg_mode", mode)
-        outs[mode] = _build_from_files(
+        outs[mode] = _build_daily_from_files(
             data_dir, out, f"by_chg_mode/{mode}", chunksize, mode_filter=mode
         )
     return outs
 
 
+def _clean_raw_chunk(chunk: pd.DataFrame, row_stride: int) -> pd.DataFrame:
+    """일별 집계 없이 행 단위 피처 정리. 메모리용으로 chunk 내 row_stride 샘플링."""
+    chunk = chunk.copy()
+    chunk["ts"] = _pick_time(chunk)
+    chunk = chunk.dropna(subset=["ts"])
+    chunk["device_no"] = chunk["device_no"].astype(str)
+    chunk["soh"] = pd.to_numeric(chunk["soh"], errors="coerce")
+    chunk = chunk[chunk["soh"].between(50, 100, inclusive="both")]
+    if chunk.empty:
+        return pd.DataFrame()
+
+    stride = max(1, int(row_stride))
+    chunk = chunk.sort_values("ts").iloc[::stride].reset_index(drop=True)
+
+    mode = chunk["chg_mode"].astype(str).str.lower().str.strip()
+    chunk["chg_mode"] = mode.map({"slow": 0.0, "fast": 1.0}).fillna(0.0)
+    for c in MAX_COLS + MEAN_COLS:
+        chunk[c] = pd.to_numeric(chunk[c], errors="coerce")
+    chunk["cell_volt_mean"] = _cell_volt_mean(chunk["cell_volt_list"])
+
+    keep = ["device_no", "ts"] + FEATURES
+    return chunk[keep]
+
+
+def prepare_raw(
+    data_dir: Path | None = None,
+    chunksize: int = 200_000,
+    row_stride: int = 100,
+) -> Path:
+    """일별 압축 없이 로우 시계열 → outputs/raw/traj/trajectories.csv
+
+    원본 ~600만 행을 그대로 두면 학습 윈도우가 과도해지므로,
+    청크 안에서 ``row_stride`` 간격으로 샘플링한다 (기본 100 → 약 1/100).
+    """
+    data_dir = data_dir or DATA_DIR
+    ensure_exp_dirs("raw")
+    out = traj_path("raw")
+    files = sorted(data_dir.glob("*.csv"))
+    if not files:
+        raise FileNotFoundError(f"No CSV in {data_dir}")
+
+    parts: list[pd.DataFrame] = []
+    for path in files:
+        print(f"[raw][read] {path.name}  row_stride={row_stride}", flush=True)
+        n = 0
+        for chunk in pd.read_csv(
+            path,
+            usecols=lambda c: c in USECOLS,
+            chunksize=chunksize,
+            low_memory=False,
+        ):
+            if "cell_volt_list" not in chunk.columns:
+                raise KeyError(f"{path.name}: cell_volt_list missing")
+            cleaned = _clean_raw_chunk(chunk, row_stride=row_stride)
+            if len(cleaned):
+                parts.append(cleaned)
+            n += len(chunk)
+            if n % 1_000_000 < chunksize:
+                print(f"  rows≈{n:,}", flush=True)
+        print(f"  done {path.name}", flush=True)
+
+    if not parts:
+        raise RuntimeError("[raw] no rows after cleaning")
+    traj = (
+        pd.concat(parts, ignore_index=True)
+        .sort_values(["device_no", "ts"])
+        .drop_duplicates(subset=["device_no", "ts"], keep="last")
+        .reset_index(drop=True)
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    traj.to_csv(out, index=False)
+    print(f"[raw][saved] {out}  rows={len(traj)}  devices={traj['device_no'].nunique()}")
+    print(traj.groupby("device_no")["soh"].agg(["min", "mean", "max", "count"]).round(3))
+    return out
+
+
+# backward-compatible alias
+prepare_session = prepare_raw
+
 PREPARE_FN = {
     "daily": prepare_daily,
-    "session": prepare_session,
     "by_chg_mode": prepare_by_chg_mode,
+    "raw": prepare_raw,
 }
 
 
-def prepare(experiment: str, data_dir: Path | None = None, chunksize: int = 200_000):
+def prepare(
+    experiment: str,
+    data_dir: Path | None = None,
+    chunksize: int = 200_000,
+    row_stride: int = 100,
+):
     fn = PREPARE_FN[experiment]
-    if experiment == "session":
-        return fn(data_dir=data_dir)  # type: ignore[call-arg]
-    return fn(data_dir=data_dir, chunksize=chunksize)  # type: ignore[call-arg]
+    if experiment == "raw":
+        return fn(data_dir=data_dir, chunksize=chunksize, row_stride=row_stride)
+    if experiment == "by_chg_mode":
+        return fn(data_dir=data_dir, chunksize=chunksize)
+    return fn(data_dir=data_dir, chunksize=chunksize)

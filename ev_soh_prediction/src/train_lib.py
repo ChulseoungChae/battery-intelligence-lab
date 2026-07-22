@@ -43,7 +43,28 @@ def fill_series(s: pd.Series) -> np.ndarray:
     return x.values.astype(np.float32)
 
 
-def build_windows(df: pd.DataFrame, L: int, H: int, time_col: str = "date") -> dict:
+def _fmt_time(v, time_col: str) -> str:
+    """daily(date) → YYYY-MM-DD, raw(ts) → full timestamp string."""
+    if time_col == "date":
+        return str(v)[:10]
+    try:
+        return pd.Timestamp(v).isoformat(sep=" ", timespec="seconds")
+    except Exception:
+        return str(v)
+
+
+def build_windows(
+    df: pd.DataFrame,
+    L: int,
+    H: int,
+    time_col: str = "date",
+    win_step: int = 1,
+) -> dict:
+    """슬라이딩 윈도우.
+
+    win_step>1 이면 윈도우 시작을 win_step 간격으로만 잡아 개수를 줄인다 (raw용).
+    """
+    step = max(1, int(win_step))
     xs, ys, lasts, vids, dates = [], [], [], [], []
     for vid, g in df.groupby("device_no"):
         g = g.sort_values(time_col).reset_index(drop=True)
@@ -52,14 +73,14 @@ def build_windows(df: pd.DataFrame, L: int, H: int, time_col: str = "date") -> d
         chans = {c: fill_series(g[c]) for c in FEATURES}
         soh = chans["soh"]
         mat = np.stack([chans[c] for c in FEATURES], axis=1)
-        for i in range(L - 1, len(g) - H):
+        for i in range(L - 1, len(g) - H, step):
             sl = slice(i - L + 1, i + 1)
             j = i + H
             xs.append(mat[sl])
             lasts.append(float(soh[i]))
             ys.append(float(soh[j]))
             vids.append(str(vid))
-            dates.append(str(g.loc[i, time_col])[:10])
+            dates.append(_fmt_time(g.loc[i, time_col], time_col))
     if not xs:
         raise RuntimeError("No windows — check L/H vs trajectory length")
     return dict(
@@ -131,14 +152,17 @@ def train_model(
 
 
 @torch.no_grad()
-def predict(model, X, last, meta, device) -> np.ndarray:
+def predict(model, X, last, meta, device, batch_size: int = 512) -> np.ndarray:
     mus = np.asarray(meta["mus"], np.float32)
     sds = np.asarray(meta["sds"], np.float32)
     Xn = (X - mus) / sds
     model.eval()
-    pred_delta = (
-        model(torch.from_numpy(Xn).to(device)).cpu().numpy() * meta["sd_t"] + meta["mu_t"]
-    )
+    outs = []
+    bs = max(1, int(batch_size))
+    for i in range(0, len(Xn), bs):
+        xb = torch.from_numpy(Xn[i : i + bs]).to(device)
+        outs.append(model(xb).cpu().numpy())
+    pred_delta = np.concatenate(outs, axis=0) * meta["sd_t"] + meta["mu_t"]
     return last + pred_delta
 
 
@@ -219,9 +243,11 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     out_dir = Path(args.out_dir) if args.out_dir else (rdir / "models")
 
     if not traj.exists():
+        script = "run_raw.py" if experiment == "raw" else "run_daily.py"
         raise SystemExit(
             f"Trajectory not found: {traj}\n"
-            f"Run: python scripts/run.py prepare --exp {experiment}"
+            f"Run: python scripts/{script} prepare"
+            + (f" --exp {experiment}" if experiment != "raw" else "")
         )
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -229,7 +255,8 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
         "cpu" if args.cpu or not torch.cuda.is_available() else "cuda"
     )
     tag = f" mode={mode}" if mode else ""
-    print(f"[train] exp={experiment}{tag} L={args.L} H={args.H} device={device}")
+    win_step = int(getattr(args, "win_step", 1) or 1)
+    print(f"[train] exp={experiment}{tag} L={args.L} H={args.H} win_step={win_step} device={device}")
     print(f"[train] traj={traj}")
     print(f"[train] out={out_dir}")
 
@@ -244,7 +271,7 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
         f"span={df[time_col].min().date()}~{df[time_col].max().date()}"
     )
 
-    W = build_windows(df, args.L, args.H, time_col=time_col)
+    W = build_windows(df, args.L, args.H, time_col=time_col, win_step=win_step)
     print(f"windows={len(W['y'])}  X={W['X'].shape}")
 
     if not args.skip_lovo:

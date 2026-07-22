@@ -22,6 +22,10 @@ def run_plot(
     H: int = 7,
     epochs: int = 60,
     mode: str | None = None,
+    win_step: int = 1,
+    patch_len: int = 4,
+    stride: int = 2,
+    max_plot_points: int = 2500,
 ) -> Path:
     if experiment == "by_chg_mode" and mode is None:
         raise SystemExit("by_chg_mode requires --mode slow|fast")
@@ -31,22 +35,30 @@ def run_plot(
     fig_dir = rdir / "figs"
     traj = traj_path(experiment, mode)
     if not traj.exists():
+        script = "run_raw.py" if experiment == "raw" else "run_daily.py"
         raise SystemExit(
             f"Trajectory not found: {traj}\n"
-            f"Run: python scripts/run.py prepare --exp {experiment}"
+            f"Run: python scripts/{script} prepare"
+            + (f" --exp {experiment}" if experiment != "raw" else "")
         )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     df = pd.read_csv(traj)
     time_col = "date" if "date" in df.columns else "ts"
     df[time_col] = pd.to_datetime(df[time_col])
-    W = build_windows(df, L, H, time_col=time_col)
+    W = build_windows(df, L, H, time_col=time_col, win_step=max(1, int(win_step)))
     tag = run_tag(L, H)
     mode_s = f"/{mode}" if mode else ""
     print(f"[plot] exp={experiment}{mode_s} {tag} windows={len(W['y'])} → {fig_dir}")
 
     model_kw = dict(
-        patch_len=4, stride=2, d_model=64, n_heads=4, n_layers=2, d_ff=128, dropout=0.1
+        patch_len=patch_len,
+        stride=stride,
+        d_model=64,
+        n_heads=4,
+        n_layers=2,
+        d_ff=128,
+        dropout=0.1,
     )
     train_kw = dict(
         L=L,
@@ -85,6 +97,8 @@ def run_plot(
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for ax, dev in zip(axes.ravel(), devices):
         g = pred_df[pred_df["device"] == dev]
+        if len(g) > max_plot_points:
+            g = g.iloc[:: max(1, len(g) // max_plot_points)]
         ax.plot(g["date"], g["y_true"], label="Actual SOH", color="#1f4e79", lw=2)
         ax.plot(g["date"], g["y_pred"], label="PatchTST pred", color="#c45c26", lw=1.5)
         ax.plot(g["date"], g["last"], label="Hold-last", color="#7a7a7a", ls="--", lw=1)
