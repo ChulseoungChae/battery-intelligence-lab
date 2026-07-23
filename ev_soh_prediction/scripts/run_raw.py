@@ -114,7 +114,6 @@ def main(argv: list[str] | None = None) -> None:
     p_all = sub.add_parser("all", help="prepare → train → plot")
     p_all.add_argument("--data-dir", type=Path, default=None)
     p_all.add_argument("--chunksize", type=int, default=200_000)
-    p_all.add_argument("--row-stride", type=int, default=100)
     _add_train_args(p_all)
 
     args = ap.parse_args(argv)
@@ -139,10 +138,11 @@ def main(argv: list[str] | None = None) -> None:
             row_stride=args.row_stride,
         )
     elif args.cmd == "all":
+        prep_stride = args.row_stride if args.row_stride is not None else 100
         prepare_raw(
             data_dir=args.data_dir,
             chunksize=args.chunksize,
-            row_stride=args.row_stride,
+            row_stride=prep_stride,
         )
         run_train(EXP, args, mode=None)
         run_plot(
