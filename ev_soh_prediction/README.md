@@ -9,6 +9,14 @@
 | **일별 압축** | `scripts/run_daily.py` | `outputs/daily/`, `outputs/by_chg_mode/` | 1 스텝 ≈ 1일 |
 | **로우(비압축)** | `scripts/run_raw.py` | `outputs/raw/` | 1 스텝 ≈ 샘플링된 원본 행 |
 
+### 개념 그림
+
+![일별 압축 파이프라인](./img/soh_일별압축.png)
+
+![일별 압축 vs Raw 학습 비교](./img/soh_모델_학습_방법.png)
+
+![PatchTST 패치 개념](./img/패치_개념.png)
+
 ---
 
 ## 데이터
@@ -129,6 +137,7 @@ outputs/raw/runs/stride100_L100_H1/figs/
 ```
 ev_soh_prediction/
   data/                         # 원본 CSV (git 제외)
+  img/                          # 학습·패치 개념 그림
   scripts/
     run_daily.py                # 일별 압축 CLI (daily / by_chg_mode)
     run_raw.py                  # 로우 비압축 CLI
