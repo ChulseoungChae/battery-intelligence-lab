@@ -1,4 +1,4 @@
-"""LOVO prediction figures for an experiment run (L, H)."""
+"""Prediction figures for an experiment run (LOVO or train_all)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +13,6 @@ import torch
 
 from .config import (
     ACC_TOLS,
-    ROOT,
     ensure_exp_dirs,
     resolve_raw_row_stride,
     run_dir,
@@ -34,14 +33,19 @@ def run_plot(
     patch_len: int = 4,
     stride: int = 2,
     row_stride: int | None = None,
+    eval_protocol: str = "lovo",
     max_plot_points: int = 2500,
 ) -> Path:
     if experiment == "by_chg_mode" and mode is None:
         raise SystemExit("by_chg_mode requires --mode slow|fast")
+    if eval_protocol not in ("lovo", "train_all"):
+        raise SystemExit(f"Unknown eval_protocol={eval_protocol!r}; use lovo|train_all")
 
     ensure_exp_dirs(experiment, mode)
     rs = resolve_raw_row_stride(row_stride) if experiment == "raw" else None
-    rdir = run_dir(experiment, L, H, mode=mode, row_stride=rs)
+    rdir = run_dir(
+        experiment, L, H, mode=mode, row_stride=rs, eval_protocol=eval_protocol
+    )
     fig_dir = rdir / "figs"
     traj = traj_path(experiment, mode)
     if not traj.exists():
@@ -57,9 +61,12 @@ def run_plot(
     time_col = "date" if "date" in df.columns else "ts"
     df[time_col] = pd.to_datetime(df[time_col])
     W = build_windows(df, L, H, time_col=time_col, win_step=max(1, int(win_step)))
-    tag = run_tag(L, H, row_stride=rs)
+    tag = run_tag(L, H, row_stride=rs, eval_protocol=eval_protocol)
     mode_s = f"/{mode}" if mode else ""
-    print(f"[plot] exp={experiment}{mode_s} {tag} windows={len(W['y'])} → {fig_dir}")
+    print(
+        f"[plot] exp={experiment}{mode_s} {tag} eval={eval_protocol} "
+        f"windows={len(W['y'])} → {fig_dir}"
+    )
 
     model_kw = dict(
         patch_len=patch_len,
@@ -82,26 +89,50 @@ def run_plot(
     )
 
     rows = []
-    for te_vid in np.unique(W["vid"]):
-        te = W["vid"] == te_vid
-        tr = ~te
-        model, meta = train_model(W["X"][tr], W["y"][tr] - W["last"][tr], **train_kw)
-        pred = predict(model, W["X"][te], W["last"][te], meta, device)
-        for j, i in enumerate(np.where(te)[0]):
+    if eval_protocol == "train_all":
+        # one model on all vehicles → predict every window
+        model, meta = train_model(
+            W["X"], W["y"] - W["last"], **train_kw
+        )
+        pred_all = predict(model, W["X"], W["last"], meta, device)
+        for i in range(len(W["y"])):
             rows.append(
                 dict(
                     device=str(W["vid"][i]),
                     date=W["date"][i],
                     y_true=float(W["y"][i]),
-                    y_pred=float(pred[j]),
+                    y_pred=float(pred_all[i]),
                     last=float(W["last"][i]),
                 )
             )
+        protocol_label = "train_all"
+        file_prefix = "trainall"
+    else:
+        # LOVO: retrain per held-out vehicle
+        for te_vid in np.unique(W["vid"]):
+            te = W["vid"] == te_vid
+            tr = ~te
+            model, meta = train_model(
+                W["X"][tr], W["y"][tr] - W["last"][tr], **train_kw
+            )
+            pred = predict(model, W["X"][te], W["last"][te], meta, device)
+            for j, i in enumerate(np.where(te)[0]):
+                rows.append(
+                    dict(
+                        device=str(W["vid"][i]),
+                        date=W["date"][i],
+                        y_true=float(W["y"][i]),
+                        y_pred=float(pred[j]),
+                        last=float(W["last"][i]),
+                    )
+                )
+        protocol_label = "LOVO"
+        file_prefix = "lovo"
 
     pred_df = pd.DataFrame(rows)
     pred_df["date"] = pd.to_datetime(pred_df["date"])
     pred_df = pred_df.sort_values(["device", "date"])
-    pred_df.to_csv(fig_dir / "lovo_predictions.csv", index=False)
+    pred_df.to_csv(fig_dir / f"{file_prefix}_predictions.csv", index=False)
 
     devices = sorted(pred_df["device"].unique())
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -116,10 +147,12 @@ def run_plot(
         ax.set_ylabel("SOH (%)")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8, loc="best")
-    fig.suptitle(f"[{experiment}{mode_s} {tag}] LOVO SOH forecast", fontsize=13)
+    fig.suptitle(
+        f"[{experiment}{mode_s} {tag}] {protocol_label} SOH forecast", fontsize=13
+    )
     fig.autofmt_xdate()
     fig.tight_layout()
-    fig.savefig(fig_dir / "lovo_pred_timeseries.png", dpi=140, bbox_inches="tight")
+    fig.savefig(fig_dir / f"{file_prefix}_pred_timeseries.png", dpi=140, bbox_inches="tight")
     plt.close()
 
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -130,18 +163,23 @@ def run_plot(
     hi = max(pred_df["y_true"].max(), pred_df["y_pred"].max()) + 0.3
     ax.plot([lo, hi], [lo, hi], "k--", lw=1, label="ideal")
     ax.fill_between(
-        [lo, hi], [lo - 1, hi - 1], [lo + 1, hi + 1], color="#1f4e79", alpha=0.08, label="±1.0 band"
+        [lo, hi],
+        [lo - 1, hi - 1],
+        [lo + 1, hi + 1],
+        color="#1f4e79",
+        alpha=0.08,
+        label="±1.0 band",
     )
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
     ax.set_xlabel("Actual SOH (%)")
     ax.set_ylabel("Predicted SOH (%)")
-    ax.set_title(f"[{experiment}{mode_s} {tag}] Actual vs Predicted")
+    ax.set_title(f"[{experiment}{mode_s} {tag}] Actual vs Predicted ({protocol_label})")
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(fig_dir / "lovo_pred_scatter.png", dpi=140, bbox_inches="tight")
+    fig.savefig(fig_dir / f"{file_prefix}_pred_scatter.png", dpi=140, bbox_inches="tight")
     plt.close()
 
     err = (pred_df["y_pred"] - pred_df["y_true"]).abs()
@@ -151,7 +189,7 @@ def run_plot(
         axes[0].axvline(t, color="#c45c26", ls=ls, lw=1.5, label=f"±{t}")
     axes[0].set_xlabel("|error| (SOH %p)")
     axes[0].set_ylabel("count")
-    axes[0].set_title("Absolute error distribution (LOVO)")
+    axes[0].set_title(f"Absolute error distribution ({protocol_label})")
     axes[0].legend(fontsize=8)
     axes[0].grid(True, alpha=0.3)
 
@@ -165,14 +203,14 @@ def run_plot(
     axes[1].set_xticklabels([f"Acc@±{t}" for t in ACC_TOLS])
     axes[1].set_ylabel("Accuracy (%)")
     axes[1].set_ylim(0, 105)
-    axes[1].set_title("Tolerance accuracy (LOVO pooled)")
+    axes[1].set_title(f"Tolerance accuracy ({protocol_label} pooled)")
     for i, (a, b) in enumerate(zip(acc_m, acc_h)):
         axes[1].text(i - w / 2, a + 1.5, f"{a:.0f}%", ha="center", fontsize=8)
         axes[1].text(i + w / 2, b + 1.5, f"{b:.0f}%", ha="center", fontsize=8)
     axes[1].legend(fontsize=8)
     axes[1].grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(fig_dir / "lovo_pred_accuracy.png", dpi=140, bbox_inches="tight")
+    fig.savefig(fig_dir / f"{file_prefix}_pred_accuracy.png", dpi=140, bbox_inches="tight")
     plt.close()
 
     print(f"[plot][saved] {fig_dir}")

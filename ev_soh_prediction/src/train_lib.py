@@ -192,7 +192,43 @@ def predict(model, X, last, meta, device, batch_size: int = 512) -> np.ndarray:
     return last + pred_delta
 
 
+def _print_vehicle_metrics(te_vid: str, n: int, m: dict, h: dict, acc_margin: float) -> None:
+    flag = "✓" if acc_margin > 0 else "✗"
+    print(
+        f"  device={te_vid}  n={n}\n"
+        f"    model     Acc@±0.5 {m['acc_0p5']:.1f}% | Acc@±1.0 {m['acc_1p0']:.1f}% | "
+        f"Acc@±2.0 {m['acc_2p0']:.1f}% | MAE {m['mae']:.4f}\n"
+        f"    hold-last Acc@±0.5 {h['hl_acc_0p5']:.1f}% | Acc@±1.0 {h['hl_acc_1p0']:.1f}% | "
+        f"Acc@±2.0 {h['hl_acc_2p0']:.1f}% | MAE {h['hl_mae']:.4f}\n"
+        f"    Acc@±1.0 margin {acc_margin:+.1f}%p {flag}"
+    )
+
+
+def _print_mean_metrics(summary: pd.DataFrame) -> None:
+    print(
+        f"  mean Acc@±0.5 {summary['acc_0p5'].mean():.1f}% "
+        f"(hl {summary['hl_acc_0p5'].mean():.1f}%) | "
+        f"Acc@±1.0 {summary['acc_1p0'].mean():.1f}% "
+        f"(hl {summary['hl_acc_1p0'].mean():.1f}%) | "
+        f"Acc@±2.0 {summary['acc_2p0'].mean():.1f}% "
+        f"(hl {summary['hl_acc_2p0'].mean():.1f}%)"
+    )
+
+
+def _model_kw_from_args(args) -> dict:
+    return dict(
+        patch_len=args.patch_len,
+        stride=args.stride,
+        d_model=args.d_model,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        d_ff=args.d_ff,
+        dropout=args.dropout,
+    )
+
+
 def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFrame | None:
+    """LOVO: 3대 학습 → 남은 1대 검증 (차량마다 모델 재학습)."""
     vids = np.unique(W["vid"])
     print(f"\n[LOVO] devices={list(vids)}  L={args.L} H={args.H} windows={len(W['y'])}")
     rows = []
@@ -213,15 +249,7 @@ def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFr
             weight_decay=args.weight_decay,
             batch_size=args.batch_size,
             seed=args.seed,
-            model_kw=dict(
-                patch_len=args.patch_len,
-                stride=args.stride,
-                d_model=args.d_model,
-                n_heads=args.n_heads,
-                n_layers=args.n_layers,
-                d_ff=args.d_ff,
-                dropout=args.dropout,
-            ),
+            model_kw=_model_kw_from_args(args),
             device=device,
             verbose=verbose,
             log_every=int(getattr(args, "log_every", 10) or 10),
@@ -237,26 +265,47 @@ def leave_one_vehicle_out(W: dict, args, device, metrics_csv: Path) -> pd.DataFr
         row["acc_1p0_margin"] = acc_margin
         row["mae_margin"] = h["hl_mae"] - m["mae"]
         rows.append(row)
-        flag = "✓" if acc_margin > 0 else "✗"
-        print(
-            f"  test={te_vid}  n={int(te.sum())}\n"
-            f"    model     Acc@±0.5 {m['acc_0p5']:.1f}% | Acc@±1.0 {m['acc_1p0']:.1f}% | "
-            f"Acc@±2.0 {m['acc_2p0']:.1f}% | MAE {m['mae']:.4f}\n"
-            f"    hold-last Acc@±0.5 {h['hl_acc_0p5']:.1f}% | Acc@±1.0 {h['hl_acc_1p0']:.1f}% | "
-            f"Acc@±2.0 {h['hl_acc_2p0']:.1f}% | MAE {h['hl_mae']:.4f}\n"
-            f"    Acc@±1.0 margin {acc_margin:+.1f}%p {flag}"
-        )
+        _print_vehicle_metrics(str(te_vid), int(te.sum()), m, h, acc_margin)
     if not rows:
         return None
     summary = pd.DataFrame(rows)
+    _print_mean_metrics(summary)
+    metrics_csv.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(metrics_csv, index=False)
+    return summary
+
+
+def train_all_eval_by_vehicle(
+    W: dict,
+    model,
+    meta: dict,
+    device,
+    metrics_csv: Path,
+) -> pd.DataFrame | None:
+    """Train-all: 4대 전체로 학습한 단일 모델을 차량별로 나눠 평가 (in-sample per vehicle)."""
+    vids = np.unique(W["vid"])
     print(
-        f"  mean Acc@±0.5 {summary['acc_0p5'].mean():.1f}% "
-        f"(hl {summary['hl_acc_0p5'].mean():.1f}%) | "
-        f"Acc@±1.0 {summary['acc_1p0'].mean():.1f}% "
-        f"(hl {summary['hl_acc_1p0'].mean():.1f}%) | "
-        f"Acc@±2.0 {summary['acc_2p0'].mean():.1f}% "
-        f"(hl {summary['hl_acc_2p0'].mean():.1f}%)"
+        f"\n[train_all] devices={list(vids)}  windows={len(W['y'])}  "
+        f"(one model, per-vehicle eval)"
     )
+    rows = []
+    for te_vid in vids:
+        te = W["vid"] == te_vid
+        pred = predict(model, W["X"][te], W["last"][te], meta, device)
+        y = W["y"][te]
+        hl = W["last"][te]
+        m = metrics_dict(y, pred)
+        h = metrics_dict(y, hl, prefix="hl_")
+        acc_margin = m["acc_1p0"] - h["hl_acc_1p0"]
+        row = dict(test_device=te_vid, n_test=int(te.sum()), **m, **h)
+        row["acc_1p0_margin"] = acc_margin
+        row["mae_margin"] = h["hl_mae"] - m["mae"]
+        rows.append(row)
+        _print_vehicle_metrics(str(te_vid), int(te.sum()), m, h, acc_margin)
+    if not rows:
+        return None
+    summary = pd.DataFrame(rows)
+    _print_mean_metrics(summary)
     metrics_csv.parent.mkdir(parents=True, exist_ok=True)
     summary.to_csv(metrics_csv, index=False)
     return summary
@@ -266,6 +315,10 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     mode = mode or getattr(args, "mode", None)
     if experiment == "by_chg_mode" and mode is None:
         raise SystemExit("by_chg_mode requires --mode slow|fast")
+
+    eval_protocol = getattr(args, "eval_protocol", "lovo") or "lovo"
+    if eval_protocol not in ("lovo", "train_all"):
+        raise SystemExit(f"Unknown eval_protocol={eval_protocol!r}; use lovo|train_all")
 
     ensure_exp_dirs(experiment, mode)
     traj = Path(args.traj) if args.traj else traj_path(experiment, mode)
@@ -280,7 +333,14 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
                     f"[warn] --row-stride={row_stride} differs from "
                     f"traj meta ({stored}); run folder uses CLI value"
                 )
-    rdir = run_dir(experiment, args.L, args.H, mode=mode, row_stride=row_stride)
+    rdir = run_dir(
+        experiment,
+        args.L,
+        args.H,
+        mode=mode,
+        row_stride=row_stride,
+        eval_protocol=eval_protocol,
+    )
     out_dir = Path(args.out_dir) if args.out_dir else (rdir / "models")
 
     if not traj.exists():
@@ -300,7 +360,7 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     stride_s = f" row_stride={row_stride}" if row_stride is not None else ""
     print(
         f"[train] exp={experiment}{tag} L={args.L} H={args.H} "
-        f"win_step={win_step}{stride_s} device={device}"
+        f"win_step={win_step}{stride_s} eval={eval_protocol} device={device}"
     )
     print(f"[train] traj={traj}")
     print(f"[train] out={out_dir}")
@@ -319,7 +379,8 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     W = build_windows(df, args.L, args.H, time_col=time_col, win_step=win_step)
     print(f"windows={len(W['y'])}  X={W['X'].shape}")
 
-    if not args.skip_lovo:
+    # LOVO: fold models first (before final all-vehicle model)
+    if eval_protocol == "lovo" and not args.skip_lovo:
         leave_one_vehicle_out(W, args, device, out_dir / "lovo_metrics.csv")
 
     mask = np.ones(len(W["y"]), dtype=bool)
@@ -327,15 +388,7 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
         mask = W["vid"] != str(args.holdout_device)
         print(f"[final] holdout={args.holdout_device} train_windows={mask.sum()}")
     y_delta = W["y"][mask] - W["last"][mask]
-    model_kw = dict(
-        patch_len=args.patch_len,
-        stride=args.stride,
-        d_model=args.d_model,
-        n_heads=args.n_heads,
-        n_layers=args.n_layers,
-        d_ff=args.d_ff,
-        dropout=args.dropout,
-    )
+    model_kw = _model_kw_from_args(args)
     model, meta = train_model(
         W["X"][mask],
         y_delta,
@@ -355,6 +408,7 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
     meta["holdout_device"] = args.holdout_device
     meta["experiment"] = experiment
     meta["mode"] = mode
+    meta["eval_protocol"] = eval_protocol
     if row_stride is not None:
         meta["row_stride"] = row_stride
 
@@ -364,6 +418,11 @@ def run_train(experiment: str, args, mode: str | None = None) -> Path:
         json.dump(meta, f, indent=2)
     print(f"[saved] {stem.with_suffix('.pt')}")
     print(f"[saved] {stem.with_suffix('.json')}")
+
+    if eval_protocol == "train_all":
+        train_all_eval_by_vehicle(
+            W, model, meta, device, out_dir / "trainall_metrics.csv"
+        )
 
     pred = predict(model, W["X"][mask], W["last"][mask], meta, device)
     y_tr, hl_tr = W["y"][mask], W["last"][mask]

@@ -128,10 +128,24 @@ def ensure_exp_dirs(name: str, mode: str | None = None) -> Path:
     return d
 
 
-def run_tag(L: int, H: int, *, row_stride: int | None = None) -> str:
+EVAL_PROTOCOLS = ("lovo", "train_all")
+
+
+def run_tag(
+    L: int,
+    H: int,
+    *,
+    row_stride: int | None = None,
+    eval_protocol: str = "lovo",
+) -> str:
+    """Folder name. train_all runs get a `_trainall` suffix so they don't clash with LOVO."""
     if row_stride is not None:
-        return f"stride{row_stride}_L{L}_H{H}"
-    return f"L{L}_H{H}"
+        base = f"stride{row_stride}_L{L}_H{H}"
+    else:
+        base = f"L{L}_H{H}"
+    if eval_protocol == "train_all":
+        return f"{base}_trainall"
+    return base
 
 
 def run_dir(
@@ -141,11 +155,14 @@ def run_dir(
     mode: str | None = None,
     *,
     row_stride: int | None = None,
+    eval_protocol: str = "lovo",
 ) -> Path:
-    """outputs/<exp>[/mode]/runs/[stride{S}_]L{L}_H{H}/"""
+    """outputs/<exp>[/mode]/runs/[stride{S}_]L{L}_H{H}[_trainall]/"""
     ensure_exp_dirs(experiment, mode)
     rs = row_stride if experiment == "raw" else None
-    d = mode_dir(experiment, mode) / "runs" / run_tag(L, H, row_stride=rs)
+    d = mode_dir(experiment, mode) / "runs" / run_tag(
+        L, H, row_stride=rs, eval_protocol=eval_protocol
+    )
     for sub in ("models", "figs"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     return d

@@ -66,6 +66,12 @@ def _add_train_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--holdout-device", type=str, default=None)
     p.add_argument("--skip-lovo", action="store_true")
+    p.add_argument(
+        "--eval-protocol",
+        choices=("lovo", "train_all"),
+        default="lovo",
+        help="lovo: 3 train / 1 test folds; train_all: train on all 4, eval per vehicle",
+    )
     p.add_argument("--cpu", action="store_true")
     p.add_argument(
         "--verbose",
@@ -109,6 +115,12 @@ def main(argv: list[str] | None = None) -> None:
     p_plot.add_argument("--epochs", type=int, default=40)
     p_plot.add_argument("--patch-len", type=int, default=10)
     p_plot.add_argument("--stride", type=int, default=5)
+    p_plot.add_argument(
+        "--eval-protocol",
+        choices=("lovo", "train_all"),
+        default="lovo",
+        help="lovo | train_all (must match train)",
+    )
     _add_row_stride_arg(p_plot)
 
     p_all = sub.add_parser("all", help="prepare → train → plot")
@@ -136,6 +148,7 @@ def main(argv: list[str] | None = None) -> None:
             patch_len=args.patch_len,
             stride=args.stride,
             row_stride=args.row_stride,
+            eval_protocol=args.eval_protocol,
         )
     elif args.cmd == "all":
         prep_stride = args.row_stride if args.row_stride is not None else 100
@@ -154,6 +167,7 @@ def main(argv: list[str] | None = None) -> None:
             patch_len=args.patch_len,
             stride=args.stride,
             row_stride=args.row_stride,
+            eval_protocol=args.eval_protocol,
         )
     else:
         ap.error(f"unknown command {args.cmd}")
