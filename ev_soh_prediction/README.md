@@ -1,5 +1,72 @@
 # ev_soh_prediction — PatchTST SOH 예측
 
+## 실험 요약
+
+차량 4대 · 기간 2022-12-15 ~ 2023-08-31 · 주 지표 **Acc@±1.0** (|예측−실제| ≤ 1.0%p 비율) · CUDA 학습.
+
+### 전체 실험 인자·결과
+
+| ID | 실험 | 평가 | L | H | row_stride | win_step | epochs | patch/stride | 윈도우 | Acc@±0.5 | **Acc@±1.0** | Acc@±2.0 | MAE | hold-last | margin | 경로 |
+|----|------|------|---|---|------------|----------|--------|--------------|--------|----------|---------------|----------|-----|-----------|--------|------|
+| R1 | `daily` | LOVO | 14 | 7 | — | 1 | 60 | 4/2 | 655 | 54.4% | **84.0%** | 98.6% | 0.576 | 94.7% | −10.7%p | [`L14_H7/`](./outputs/daily/runs/L14_H7/) |
+| R2 | `daily` | LOVO | 30 | 1 | — | 1 | 60 | 4/2 | 615 | 96.7% | **99.5%** | 100% | 0.122 | 99.5% | 0.0%p | [`L30_H1/`](./outputs/daily/runs/L30_H1/) |
+| R3 | `daily` | LOVO | 30 | 7 | — | 1 | 60 | 4/2 | 591 | 64.5% | **87.8%** | 98.5% | 0.481 | 94.1% | −6.3%p | [`L30_H7/`](./outputs/daily/runs/L30_H7/) |
+| R4a | `by_chg_mode`·slow | LOVO | 30 | 7 | — | 1 | 60 | 4/2 | 463 | 38.9% | **74.1%** | 99.1% | 0.703 | 95.9% | −21.8%p | [`slow/L30_H7/`](./outputs/by_chg_mode/slow/runs/L30_H7/) |
+| R4b | `by_chg_mode`·fast | LOVO | 30 | 7 | — | 1 | 60 | 4/2 | 296 | 32.8% | **58.4%** | 88.9% | 0.987 | 85.1% | −26.7%p | [`fast/L30_H7/`](./outputs/by_chg_mode/fast/runs/L30_H7/) |
+| R5 | `raw` | LOVO | 100 | 1 | 100 | 5 | 40 | 10/5 | 11,819 | 100% | **100%** | 100% | 0.001 | 100% | 0.0%p | [`stride100_L100_H1/`](./outputs/raw/runs/stride100_L100_H1/) |
+| R6 | `raw` | LOVO | 100 | 50 | 100 | 5 | 40 | 10/5 | 11,780 | 98.2% | **99.8%** | 100% | 0.049 | 99.8% | 0.0%p | [`stride100_L100_H50/`](./outputs/raw/runs/stride100_L100_H50/) |
+| R7 | `raw` | LOVO | 100 | 180 | 100 | 5 | 40 | 10/5 | 11,676 | 92.5% | **98.9%** | 100% | 0.196 | 98.9% | 0.0%p | [`stride100_L100_H180/`](./outputs/raw/runs/stride100_L100_H180/) |
+| R8 | `raw` | LOVO | 120 | 180 | 60 | 5 | 40 | 10/5 | 19,589 | 96.3% | **99.3%** | 100% | 0.119 | 99.4% | −0.2%p | [`stride60_L120_H180/`](./outputs/raw/runs/stride60_L120_H180/) |
+| R9 | `raw` | LOVO | 120 | 300 | 60 | 5 | 40 | 10/5 | 19,493 | 92.6% | **98.7%** | 100% | 0.177 | 98.9% | −0.2%p | [`stride60_L120_H300/`](./outputs/raw/runs/stride60_L120_H300/) |
+| R10 | `raw` | LOVO | 180 | 600 | 30 | 5 | 40 | 10/5 | 39,033 | 92.9% | **99.0%** | 100% | 0.193 | 98.8% | +0.2%p | [`stride30_L180_H600/`](./outputs/raw/runs/stride30_L180_H600/) |
+| R11 | `raw` | train_all | 120 | 300 | 60 | 5 | 40 | 10/5 | 19,496 | 95.2% | **98.9%** | 100% | 0.126 | 98.9% | +0.1%p | [`stride60_L120_H300_trainall/`](./outputs/raw/runs/stride60_L120_H300_trainall/) |
+| R12 | `raw` | train_all | 180 | 600 | 30 | 5 | 40 | 10/5 | 39,033 | 95.4% | **98.9%** | 100% | 0.114 | 98.8% | +0.1%p | [`stride30_L180_H600_trainall/`](./outputs/raw/runs/stride30_L180_H600_trainall/) |
+
+> R5는 Acc@±1.0 100%이지만 인접 샘플 SOH 변화가 거의 없어 hold-last와 동일한 **trivial** 과제입니다.  
+> margin = model Acc@±1.0 − hold-last Acc@±1.0 (양수면 모델 우세).
+
+### 추천 Top 2
+
+#### 1) R6 — raw · L=100 · H=50 (trivial 제외 최고 Acc@±1.0 **99.8%**)
+
+```bash
+# 궤적이 없으면 prepare부터
+python scripts/run_raw.py prepare --row-stride 100
+python scripts/run_raw.py all --L 100 --H 50 --win-step 5 --row-stride 100
+```
+
+| 항목 | 값 |
+|------|-----|
+| 설정 | lookback 100스텝 → **50스텝 후** SOH, `row_stride=100`, `win_step=5` |
+| LOVO Acc@±1.0 | **99.8%** (hold-last 99.8%, margin 0.0%p) |
+| MAE | 0.049 |
+| 윈도우 | 11,780개 |
+| 산출물 | `outputs/raw/runs/stride100_L100_H50/{models,figs}/` |
+
+- raw 트랙 중 의미 있는 지평(H=50)에서 가장 높은 정확도
+- 상세: [R6 섹션](#r6--raw--l100--h50-50스텝-후-soh)
+
+#### 2) R2 — daily · L=30 · H=1 (일별 압축 최고 Acc@±1.0 **99.5%**)
+
+```bash
+python scripts/run_daily.py all --exp daily --L 30 --H 1
+```
+
+| 항목 | 값 |
+|------|-----|
+| 설정 | lookback **30일** → **1일 후** SOH, 일별 압축 궤적 735행 |
+| LOVO Acc@±1.0 | **99.5%** (hold-last 99.5%, margin 0.0%p) |
+| MAE | 0.122 |
+| 윈도우 | 615개 |
+| 산출물 | `outputs/daily/runs/L30_H1/{models,figs}/` |
+
+- 일별 압축 파이프라인에서 최고 성능, 실행·해석이 단순해 **실무 적용 1순위**
+- 상세: [R2 섹션](#r2--daily--l30--h1-1일-후-예측)
+
+> 장기 지평이 필요하면 **R10** (LOVO Acc@±1.0 **99.0%**, H=600, `row_stride=30`)도 참고하세요.
+
+---
+
 `./data`의 EV BMS CSV로 궤적을 만든 뒤, PatchTST로 **H 스텝 후 SOH**를 예측하는 프로젝트입니다.
 
 실행 파일은 **일별 압축**과 **로우(비압축)** 두 갈래로 나뉩니다.
@@ -305,23 +372,23 @@ SOH는 연속값이므로 분류 accuracy 대신 **허용오차 정확도**를 �
 
 ## 실험 결과
 
-새 설정·방법을 돌릴 때마다 아래 **결과 목록**에 한 줄 추가하고, 상세 섹션을 이어서 붙이면 됩니다.
+새 설정·방법을 돌릴 때마다 **상단 [실험 요약](#실험-요약)** 표에 한 줄 추가하고, 상세 섹션을 이어서 붙이면 됩니다.
 
-| ID | 실험 | 평가 | L | H | 윈도우 수 | Acc@±1.0 | hold-last Acc@±1.0 | 경로 |
-|----|------|------|---|---|-----------|----------|--------------------|------|
-| R1 | `daily` | LOVO | 14 | 7 | 655 | 84.5% | 94.4% | [`runs/L14_H7/`](./outputs/daily/runs/L14_H7/) |
-| R2 | `daily` | LOVO | 30 | 1 | 615 | **99.5%** | **99.5%** | [`runs/L30_H1/`](./outputs/daily/runs/L30_H1/) |
-| R3 | `daily` | LOVO | 30 | 7 | 591 | 85.3% | 93.6% | [`runs/L30_H7/`](./outputs/daily/runs/L30_H7/) |
-| R4a | `by_chg_mode` · slow | LOVO | 30 | 7 | 463 | 74.3% | 95.4% | [`slow/runs/L30_H7/`](./outputs/by_chg_mode/slow/runs/L30_H7/) |
-| R4b | `by_chg_mode` · fast | LOVO | 30 | 7 | 296 | 55.4% | 85.6% | [`fast/runs/L30_H7/`](./outputs/by_chg_mode/fast/runs/L30_H7/) |
-| R5 | `raw` · H=1 | LOVO | 100 | 1 | 11819 | **100%** | **100%** | [`stride100_L100_H1/`](./outputs/raw/runs/stride100_L100_H1/) |
-| R6 | `raw` · H=50 | LOVO | 100 | 50 | 11780 | 99.8% | 99.8% | [`stride100_L100_H50/`](./outputs/raw/runs/stride100_L100_H50/) |
-| R7 | `raw` · H=180 | LOVO | 100 | 180 | 11676 | 96.4% | 96.6% | [`stride100_L100_H180/`](./outputs/raw/runs/stride100_L100_H180/) |
-| R8 | `raw` · stride 60 | LOVO | 120 | 180 | 19589 | 98.5% | 99.0% | [`stride60_L120_H180/`](./outputs/raw/runs/stride60_L120_H180/) |
-| R9 | `raw` · stride 60 | LOVO | 120 | 300 | 19493 | 95.9% | 96.6% | [`stride60_L120_H300/`](./outputs/raw/runs/stride60_L120_H300/) |
-| R10 | `raw` · stride 30 | LOVO | 180 | 600 | 39033 | 96.4% | 96.5% | [`stride30_L180_H600/`](./outputs/raw/runs/stride30_L180_H600/) |
-| R11 | `raw` · stride 60 | **train_all** | 120 | 300 | 19496 | 96.6% | 96.6% | [`stride60_L120_H300_trainall/`](./outputs/raw/runs/stride60_L120_H300_trainall/) |
-| R12 | `raw` · stride 30 | **train_all** | 180 | 600 | 39033 | **97.3%** | 96.5% | [`stride30_L180_H600_trainall/`](./outputs/raw/runs/stride30_L180_H600_trainall/) |
+| ID | 실험 | 평가 | L | H | row_stride | win_step | 윈도우 | Acc@±1.0 | hold-last | margin | 경로 |
+|----|------|------|---|---|------------|----------|--------|----------|-----------|--------|------|
+| R1 | `daily` | LOVO | 14 | 7 | — | 1 | 655 | 84.0% | 94.7% | −10.7%p | [`runs/L14_H7/`](./outputs/daily/runs/L14_H7/) |
+| R2 | `daily` | LOVO | 30 | 1 | — | 1 | 615 | **99.5%** | 99.5% | 0.0%p | [`runs/L30_H1/`](./outputs/daily/runs/L30_H1/) |
+| R3 | `daily` | LOVO | 30 | 7 | — | 1 | 591 | 87.8% | 94.1% | −6.3%p | [`runs/L30_H7/`](./outputs/daily/runs/L30_H7/) |
+| R4a | `by_chg_mode` · slow | LOVO | 30 | 7 | — | 1 | 463 | 74.1% | 95.9% | −21.8%p | [`slow/runs/L30_H7/`](./outputs/by_chg_mode/slow/runs/L30_H7/) |
+| R4b | `by_chg_mode` · fast | LOVO | 30 | 7 | — | 1 | 296 | 58.4% | 85.1% | −26.7%p | [`fast/runs/L30_H7/`](./outputs/by_chg_mode/fast/runs/L30_H7/) |
+| R5 | `raw` · H=1 | LOVO | 100 | 1 | 100 | 5 | 11819 | **100%** | 100% | 0.0%p | [`stride100_L100_H1/`](./outputs/raw/runs/stride100_L100_H1/) |
+| R6 | `raw` · H=50 | LOVO | 100 | 50 | 100 | 5 | 11780 | **99.8%** | 99.8% | 0.0%p | [`stride100_L100_H50/`](./outputs/raw/runs/stride100_L100_H50/) |
+| R7 | `raw` · H=180 | LOVO | 100 | 180 | 100 | 5 | 11676 | 98.9% | 98.9% | 0.0%p | [`stride100_L100_H180/`](./outputs/raw/runs/stride100_L100_H180/) |
+| R8 | `raw` · stride 60 | LOVO | 120 | 180 | 60 | 5 | 19589 | 99.3% | 99.4% | −0.2%p | [`stride60_L120_H180/`](./outputs/raw/runs/stride60_L120_H180/) |
+| R9 | `raw` · stride 60 | LOVO | 120 | 300 | 60 | 5 | 19493 | 98.7% | 98.9% | −0.2%p | [`stride60_L120_H300/`](./outputs/raw/runs/stride60_L120_H300/) |
+| R10 | `raw` · stride 30 | LOVO | 180 | 600 | 30 | 5 | 39033 | **99.0%** | 98.8% | +0.2%p | [`stride30_L180_H600/`](./outputs/raw/runs/stride30_L180_H600/) |
+| R11 | `raw` · stride 60 | **train_all** | 120 | 300 | 60 | 5 | 19496 | 98.9% | 98.9% | +0.1%p | [`stride60_L120_H300_trainall/`](./outputs/raw/runs/stride60_L120_H300_trainall/) |
+| R12 | `raw` · stride 30 | **train_all** | 180 | 600 | 30 | 5 | 39033 | 98.9% | 98.8% | +0.1%p | [`stride30_L180_H600_trainall/`](./outputs/raw/runs/stride30_L180_H600_trainall/) |
 
 공통 데이터: 차량 4대, 기간 2022-12-15 ~ 2023-08-31, CUDA.  
 R1–R4는 일별 궤적(735행). R5–R7는 `row_stride=100`, `win_step=5`, `L=100`. R8–R9·**R11**는 `row_stride=60`, `win_step=5`, `L=120`. R10·**R12**는 `row_stride=30`, `win_step=5`, `L=180`, `H=600`.
