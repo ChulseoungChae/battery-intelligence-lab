@@ -1,11 +1,27 @@
 # ev_soh_prediction — PatchTST SOH 예측
 
+## 개념 그림
+
+![일별 압축 vs Raw 학습 비교](./img/soh_모델_학습_방법.png)
+
+![일별 압축 파이프라인](./img/soh_일별압축.png)
+
+![원본 파이프라인](./img/RAW_예측.png)
+
+![PatchTST 패치 개념](./img/패치_개념.png)
+
+---
+
 ## 빠른 실행 (R11)
 
-`raw` · 차량 4대 전체 학습(`train_all`) · **L=120** · **H=300** · **row_stride=60** · **win_step=5**  
+기본으로 쓰는 설정입니다. 원본 BMS를 일별로 합치지 않고(`raw`), 4대 전부로 한 모델을 학습합니다(`train_all`).  
+과거 **120스텝**을 보고 **300스텝 뒤 SOH**를 예측합니다. 원본은 60행마다 1행만 쓰고(`row_stride=60`), 윈도우는 5스텝마다 옮깁니다(`win_step=5`).
+
 가중치: [`outputs/raw/runs/stride60_L120_H300_trainall/`](./outputs/raw/runs/stride60_L120_H300_trainall/)
 
 ### 학습
+
+`prepare`는 CSV를 궤적으로 만들고, `train`은 PatchTST를 학습하며, `plot`은 차량별 예측 그래프를 저장합니다.
 
 ```bash
 python scripts/run_raw.py prepare --row-stride 60
@@ -13,7 +29,9 @@ python scripts/run_raw.py train --L 120 --H 300 --win-step 5 --row-stride 60 --e
 python scripts/run_raw.py plot  --L 120 --H 300 --win-step 5 --row-stride 60 --eval-protocol train_all
 ```
 
-### 추론 (차량 1대, 기본값이 R11)
+### 추론 (차량 1대)
+
+학습된 가중치를 불러, 한 차량 데이터를 시간순으로 한 행씩 넣습니다. lookback L이 차면 **지금 시점 기준 300스텝 후 SOH**를 출력합니다. 아래 명령은 인자를 생략해도 R11 기본값을 씁니다.
 
 ```bash
 python scripts/run_infer.py --device 1241225226
@@ -118,16 +136,6 @@ python scripts/run_daily.py all --exp daily --L 30 --H 1
 | **일별 압축** | `scripts/run_daily.py` | `outputs/daily/`, `outputs/by_chg_mode/` | 1 스텝 ≈ 1일 |
 | **로우(비압축)** | `scripts/run_raw.py` | `outputs/raw/` | 1 스텝 ≈ 샘플링된 원본 행 |
 | **추론** | `scripts/run_infer.py` | 학습된 `.pt` + 차량 1대 스트림 | 실시간처럼 L 버퍼 → H 후 SOH |
-
-### 개념 그림
-
-![일별 압축 vs Raw 학습 비교](./img/soh_모델_학습_방법.png)
-
-![일별 압축 파이프라인](./img/soh_일별압축.png)
-
-![원본 파이프라인](./img/RAW_예측.png)
-
-![PatchTST 패치 개념](./img/패치_개념.png)
 
 ---
 
