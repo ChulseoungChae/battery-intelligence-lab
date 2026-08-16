@@ -1,5 +1,28 @@
 # ev_soh_prediction — PatchTST SOH 예측
 
+## 빠른 실행 (R11)
+
+`raw` · 차량 4대 전체 학습(`train_all`) · **L=120** · **H=300** · **row_stride=60** · **win_step=5**  
+가중치: [`outputs/raw/runs/stride60_L120_H300_trainall/`](./outputs/raw/runs/stride60_L120_H300_trainall/)
+
+### 학습
+
+```bash
+python scripts/run_raw.py prepare --row-stride 60
+python scripts/run_raw.py train --L 120 --H 300 --win-step 5 --row-stride 60 --eval-protocol train_all
+python scripts/run_raw.py plot  --L 120 --H 300 --win-step 5 --row-stride 60 --eval-protocol train_all
+```
+
+### 추론 (차량 1대, 기본값이 R11)
+
+```bash
+python scripts/run_infer.py --device 1241225226
+```
+
+다른 차량: `--device 1241225178` / `1241225211` / `1241225220`
+
+---
+
 ## 실험 요약
 
 차량 4대 · 기간 2022-12-15 ~ 2023-08-31 · 주 지표 **Acc@±1.0** (|예측−실제| ≤ 1.0%p 비율) · CUDA 학습.
@@ -94,6 +117,7 @@ python scripts/run_daily.py all --exp daily --L 30 --H 1
 |------|-----|------|----------------|
 | **일별 압축** | `scripts/run_daily.py` | `outputs/daily/`, `outputs/by_chg_mode/` | 1 스텝 ≈ 1일 |
 | **로우(비압축)** | `scripts/run_raw.py` | `outputs/raw/` | 1 스텝 ≈ 샘플링된 원본 행 |
+| **추론** | `scripts/run_infer.py` | 학습된 `.pt` + 차량 1대 스트림 | 실시간처럼 L 버퍼 → H 후 SOH |
 
 ### 개념 그림
 
@@ -229,10 +253,12 @@ ev_soh_prediction/
   scripts/
     run_daily.py                # 일별 압축 CLI (daily / by_chg_mode)
     run_raw.py                  # 로우 비압축 CLI
+    run_infer.py                # 차량 1대 실시간(리플레이) 추론
   src/
     config.py                   # FEATURES, 실험 경로
     data_prep.py                # prepare_daily / prepare_by_chg_mode / prepare_raw
     train_lib.py                # 윈도우·학습·LOVO
+    infer_lib.py                # 체크포인트 로드·lookback 버퍼·리플레이
     plot_lib.py                 # 예측 그래프
     patchtst.py                 # 모델
   outputs/
@@ -1076,6 +1102,40 @@ python scripts/run_raw.py all --L <L> --H <H> --win-step 5 --row-stride <S> --ev
 
 ---
 
+## 실시간 추론 (차량 1대)
+
+학습이 끝난 가중치(`.pt` + `.json`)로, 데이터가 **한 행씩 들어올 때** H 스텝 후 SOH를 예측한다.  
+지금은 학습에 쓴 차량 1대 궤적을 시간순으로 밀어 넣어 **라이브 피드처럼 리플레이**한다.
+
+```
+새 BMS/일별 행
+    │
+    ▼  LookbackBuffer (최근 L 스텝)
+L이 차면 PatchTST → soh_pred = soh(t) + Δ
+    │
+    ▼  H 스텝 뒤 실제 soh가 도착하면 오차 기록
+outputs/.../figs/infer_{device}.csv  (+ .png)
+```
+
+기본은 **R11** (`raw` · train_all · L=120 · H=300 · row_stride=60 · win_step=5). 차량은 행 수가 가장 적은 **`1241225226`**.
+
+```bash
+# R11 (인자 생략 — 상단 빠른 실행과 동일)
+python scripts/run_infer.py --device 1241225226
+
+# 원본 BMS CSV를 그대로 스트림 (raw만, 학습과 같은 row_stride 샘플)
+python scripts/run_infer.py --source csv --device 1241225226
+
+# 일별 압축 R2
+python scripts/run_infer.py --exp daily --L 30 --H 1 --eval-protocol lovo --win-step 1 --device 1241225226
+```
+
+다른 차량: `--device 1241225178` / `1241225211` / `1241225220`.
+
+코드에서 한 행씩 넣을 때는 `src.infer_lib.LookbackBuffer.push` 후 `train_lib.predict`를 호출하면 된다 (`run_infer.py`가 그 루프를 수행).
+
+---
+
 ## 산출물 요약
 
 | 경로 | 내용 |
@@ -1086,6 +1146,7 @@ python scripts/run_raw.py all --L <L> --H <H> --win-step 5 --row-stride <S> --ev
 | `.../runs/..._trainall/` | train_all 평가 실험 (R11–R12) |
 | `outputs/<exp>/runs/.../models/` | 가중치·json·`lovo_metrics.csv` 또는 `trainall_metrics.csv` |
 | `outputs/<exp>/runs/.../figs/` | LOVO 또는 train_all 그래프·예측 csv |
+| `outputs/<exp>/runs/.../figs/infer_{device}.*` | 차량 1대 실시간 리플레이 예측 csv·png |
 
 ---
 
