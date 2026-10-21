@@ -17,6 +17,7 @@ EV·ESS 배터리 데이터를 활용한 **데이터 분석 · 전처리 · 시�
 | 경로 | 설명 | 상태 |
 |------|------|------|
 | [`ev_soh_prediction/`](ev_soh_prediction/) | EV BMS **PatchTST SOH 예측** — 일별 압축(`run_daily.py`) / 로우(`run_raw.py`) | 진행 중 |
+| [`ess_used_battery/`](ess_used_battery/) | 사용후 배터리 2-ESS 맞충·방전 로그 전처리 | 진행 중 |
 
 각 하위 폴더의 `README.md`에 데이터·파이프라인·실험 결과가 정리되어 있습니다.
 
