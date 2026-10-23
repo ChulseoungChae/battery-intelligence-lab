@@ -2,7 +2,7 @@
 
 GW1–GW4를 하나의 ESS(A), GW5–GW8을 다른 ESS(B)로 두고, 2026-03-01부터 2026-06-30까지 DC-DC로 서로 충·방전한 로그를 정리한다. 전류 양수는 그 GW로 들어오는 충전이다.
 
-원본 CSV는 `/data1/ess_data/battery_data`에 있다. 전처리 결과는 이 폴더 기준 `../../ess_data/preproced_data`이며, 절대 경로는 `/data1/github_cschae/ess_data/preproced_data`이다. 결과 폴더명은 `preproced_data`를 그대로 쓴다. 용량이 커서 git에는 올리지 않는다.
+원본 CSV는 `/data1/ess_data/battery_data`에 있다. 전처리 결과는 `/data1/ess_data/preproced_data`이다. 이 폴더 기준으로는 `../../../ess_data/preproced_data`이다. 결과 폴더명은 `preproced_data`를 그대로 쓴다. 용량이 커서 git에는 올리지 않는다.
 
 ## 실행
 
@@ -14,7 +14,7 @@ python preprocess.py
 원본이나 출력 위치를 바꿀 때:
 
 ```bash
-python preprocess.py --raw /data1/ess_data/battery_data --out ../../ess_data/preproced_data
+python preprocess.py --raw /data1/ess_data/battery_data --out /data1/ess_data/preproced_data
 ```
 
 ## 처리 내용

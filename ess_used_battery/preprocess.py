@@ -16,7 +16,7 @@ import pandas as pd
 
 RAW_DIR = Path("/data1/ess_data/battery_data")
 OUT_DIR = (
-    Path(__file__).resolve().parent / ".." / ".." / "ess_data" / "preproced_data"
+    Path(__file__).resolve().parent / ".." / ".." / ".." / "ess_data" / "preproced_data"
 ).resolve()
 
 GW_ESS = {f"GW{i}": ("A" if i <= 4 else "B") for i in range(1, 9)}
