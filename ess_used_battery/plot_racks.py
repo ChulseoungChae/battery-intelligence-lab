@@ -15,6 +15,7 @@ import pandas as pd
 from matplotlib import font_manager
 
 ALIGNED = Path("/data1/ess_data/preproced_data/aligned/ess_pair.parquet")
+CLEAN_DIR = Path("/data1/ess_data/preproced_data/clean")
 IMG_DIR = Path(__file__).resolve().parent / "img"
 FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 COLOR_A = "#1f4e79"
@@ -105,6 +106,57 @@ def plot_example(frame: pd.DataFrame, path: Path) -> None:
     plt.close(figure)
 
 
+def load_pack(gateway: str) -> pd.DataFrame:
+    frame = pd.read_parquet(
+        CLEAN_DIR / f"{gateway}.parquet",
+        columns=["timestamp", "total_current", "total_voltage"],
+    )
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"])
+    return frame.rename(
+        columns={
+            "total_current": f"I_{gateway}",
+            "total_voltage": f"V_{gateway}",
+        }
+    )
+
+
+def plot_gw1_gw5(path: Path) -> None:
+    """GW1(ESS A)과 GW5(ESS B)의 전체 기간 팩 전류·전압."""
+    merged = load_pack("GW1").merge(load_pack("GW5"), on="timestamp", how="outer")
+    merged = merged.sort_values("timestamp").reset_index(drop=True)
+    columns = ["I_GW1", "V_GW1", "I_GW5", "V_GW5"]
+    merged = break_at_gaps(merged, columns, seconds=600)
+    figure, axes = plt.subplots(2, 1, figsize=(11, 6.4), sharex=True)
+    current, voltage = axes
+    current.plot(merged["timestamp"], merged["I_GW1"], color=COLOR_A, linewidth=0.4, label="GW1 팩 전류")
+    current.plot(merged["timestamp"], merged["I_GW5"], color=COLOR_B, linewidth=0.4, label="GW5 팩 전류")
+    current.axhline(0, color="#666666", linewidth=0.8)
+    current.set_ylim(-20, 20)
+    current.set_ylabel("팩 전류 (A)")
+    current.set_title("GW1 · GW5  전체 기간 팩 전류와 팩 전압  (전류 축 -20~20A, GW1 340A 1회는 축 밖)")
+    current.legend(frameon=False, ncol=2, loc="upper right")
+    voltage.plot(merged["timestamp"], merged["V_GW1"], color=COLOR_A, linewidth=0.4, label="GW1 팩 전압")
+    voltage.plot(merged["timestamp"], merged["V_GW5"], color=COLOR_B, linewidth=0.4, label="GW5 팩 전압")
+    voltage.set_ylabel("팩 전압 (V)")
+    voltage.legend(frameon=False, ncol=2, loc="upper right")
+    for axis in axes:
+        axis.spines["top"].set_visible(False)
+        axis.spines["right"].set_visible(False)
+    figure.autofmt_xdate()
+    figure.tight_layout()
+    figure.savefig(path, dpi=140)
+    plt.close(figure)
+    both = merged.dropna(subset=["I_GW1", "I_GW5"])
+    print(
+        "GW1-GW5 overlap",
+        len(both),
+        "I corr",
+        round(both["I_GW1"].corr(both["I_GW5"]), 3),
+        "V corr",
+        round(both["V_GW1"].corr(both["V_GW5"]), 3),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--aligned", type=Path, default=ALIGNED)
@@ -116,6 +168,7 @@ def main() -> None:
     daily = daily_energy(frame)
     plot_daily(daily, args.out / "rack_daily_energy.png")
     plot_example(frame, args.out / "rack_exchange_example.png")
+    plot_gw1_gw5(args.out / "gw1_gw5_pack.png")
     opposite = ((daily["kwh_a"] > 1) & (daily["kwh_b"] < -1)) | (
         (daily["kwh_a"] < -1) & (daily["kwh_b"] > 1)
     )
