@@ -116,7 +116,16 @@
 | 원본 CSV | `/data1/ess_data/battery_data` |
 | 전처리 결과 | `/data1/ess_data/preproced_data` |
 
-## 랙 충·방전
+## 분석
+
+- 실행 위치: `ess_used_battery`
+- 전처리 결과 `clean/`, `aligned/`가 있어야 한다. 없으면 `python preprocess.py`
+
+### 1. 랙 충·방전
+
+```bash
+python plot_racks.py
+```
 
 - 출처: `aligned/ess_pair.parquet` (30초, 전류 부호는 원본과 같음)
 - `I_A`, `I_B`: GW 4개 전류 합. 양수 충전, 음수 방전
@@ -141,10 +150,13 @@
 
 ![GW1과 GW5 전체 기간 팩 전류·전압](img/gw1_gw5_pack.png)
 
-- 다시 그리기: `python plot_racks.py`
+### 2. 방전별 SOH
 
-## 방전별 SOH
+```bash
+python soh_charge.py
+```
 
+- 이 명령은 방전 SOH와 충전 SOH를 함께 만든다
 - 기준: 검증 시험의 팩별 방전 전력량. 표의 초기용량 합계 515.770 kWh는 방전 전력량 합
 - 배터리팩 번호는 GW 번호와 같음. GW1~4는 EV용 충전용 ESS, GW5~8은 수요관리형 ESS
 - 공식: `SOH = E / E0 × 100`
@@ -156,7 +168,6 @@
 - 전압 하강이 25V보다 작으면 방전 횟수에서 뺌
 - 표의 충방전 효율: 방전 515.770 / 충전 536.381 × 100 = 96.157%. 이 값은 시험표의 효율이고, SOH 분모는 방전 전력량
 - 입력: `clean/GW1.parquet` … `GW8.parquet`의 팩 전류, 팩 전압
-- 다시 계산: `python soh_charge.py`
 - 방전 목록: `soh_by_discharge.csv`
 
 | 팩 | GW | ESS | 시험 충전 (kWh) | 초기 방전 E0 (kWh) |
@@ -190,9 +201,13 @@
 
 - 40 아래로 내려간 점은 그 방전에서 전압이 덜 내려가 에너지가 작음. GW1 3월 8일 34.1, GW6 6월 15일 35.8
 
-## 충전별 SOH
+### 3. 충전별 SOH
 
-- 위 방전 결과와 별도. 전류가 양수인 충전 구간만 사용
+```bash
+python soh_charge.py
+```
+
+- 2번과 같은 명령이다. 전류가 양수인 충전 구간만 이 절의 대상이다
 - 공식: `SOH = E / E0 × 100`
 - `E0`: 위 표의 시험 충전 전력량(kWh). GW1은 69.644, GW4는 64.354, GW8은 67.644
 - `E`: 이번 충전에서 쌓인 에너지(kWh). `E = Σ(전류 × 팩전압 × 시간 간격) / 3,600,000`
@@ -200,7 +215,6 @@
 - 10분을 넘는 공백, 전류 스파이크, 팩 전압 끊김이 있으면 구간을 나눔
 - 전압이 그 구간 최대값의 1.5V 안에 처음 들어온 시각까지만 더함. 전압이 이미 오른 뒤 전류만 이어지는 시간은 에너지에서 뺌
 - 전압 상승이 25V보다 작으면 충전 횟수에서 뺌
-- 다시 계산: `python soh_charge.py`
 - 충전 목록: `soh_by_charge.csv`
 
 ![GW1~GW8 충전별 SOH](img/soh_by_charge.png)
@@ -222,7 +236,11 @@
 
 - 40 아래로 내려간 점은 그 충전에서 전압이 덜 올라 에너지가 작음. GW1 3월 28일 33.6, GW6 6월 8일 27.8
 
-## 셀 전압 일치도
+### 4. 셀 전압 일치도
+
+```bash
+python cell_consistency.py
+```
 
 - SOC, SOH와 별개. 같은 시각의 셀 전압이 서로 얼마나 모여 있는지로 팩 성능을 본다
 - 시점: 충전은 팩 전압이 그 구간 최대의 1.5V 안에 처음 들어온 시각. 방전은 최저의 1.5V 안
@@ -231,7 +249,6 @@
 - 불균일률(%) = `(최대 셀 − 최소 셀) / 셀 중앙값 × 100`
 - 일치도(%) = `100 − 불균일률`. 유효 셀 전압이 모두 같으면 100
 - 셀 이탈률(%) = `(그 셀 − 셀 중앙값) / 셀 중앙값 × 100`. 음수면 중앙보다 낮음
-- 다시 계산: `python cell_consistency.py`
 - 회차별 목록: `cell_consistency.csv`
 
 ![GW1~GW8 셀 전압 일치도](img/cell_consistency.png)
@@ -256,14 +273,14 @@
 - GW6 방전은 3월 97.1에서 6월 91.4로 벌어졌다
 - 충전 끝에서 셀 전압 합과 팩 전압의 차이는 GW1·GW3·GW6·GW7·GW8이 0.03V 안쪽. GW4는 -0.8V, GW5는 +3.7V, GW2는 -7.8V. 일치도는 팩 전압이 아니라 셀 중앙값 기준이다
 
-## 실행
-
-- 실행 위치: `ess_used_battery`
+## 전처리 실행
 
 ```bash
 pip install -r requirements.txt
 python preprocess.py
 ```
+
+- 실행 위치: `ess_used_battery`
 
 - 경로를 직접 지정할 때
 
