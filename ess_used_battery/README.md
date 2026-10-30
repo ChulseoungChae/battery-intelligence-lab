@@ -2,7 +2,42 @@
 
 GW1~GW8 두 랙이 DC-DC로 서로 충·방전한 기록이다. 이 폴더의 코드는 데이터 개요, 랙 교환, 방전·충전 SOH, 셀 전압 일치도, 전처리를 만든다.
 
-실행 위치는 `ess_used_battery`.
+실행 위치는 `ess_used_battery`. 원본과 전처리 결과는 이 폴더 밖이다.
+
+## 디렉토리
+
+```text
+ess_used_battery/
+├── preprocess.py            원본 CSV를 30초 parquet로 정리
+├── data_overview.py         줄 수, 주기, 공백 집계
+├── plot_racks.py            랙 충·방전 그래프
+├── soh_charge.py            충전·방전 SOH
+├── cell_consistency.py      셀 전압 일치도
+├── requirements.txt         numpy, pandas, pyarrow
+├── data_overview_gw.csv     데이터 개요 표
+├── soh_by_charge.csv        충전별 SOH
+├── soh_by_discharge.csv     방전별 SOH
+├── cell_consistency.csv     회차별 셀 일치도
+├── img/                     분석 그래프
+│   ├── rack_daily_energy.png
+│   ├── rack_exchange_example.png
+│   ├── gw1_gw5_pack.png
+│   ├── soh_by_discharge.png
+│   ├── soh_by_charge.png
+│   └── cell_consistency.png
+└── README.md
+```
+
+- 원본 CSV: `/data1/ess_data/battery_data`
+- 전처리 결과: `/data1/ess_data/preproced_data` (`clean/`, `aligned/`, `reports/`)
+
+## 코드
+
+- `preprocess.py`: 날짜 오류·복사본을 빼고 30초 기록과 품질 표시를 저장
+- `data_overview.py`: 1초·30초 줄 수, 중간 공백, 짧은 기록, 같은 랙의 줄 수 차이를 집계
+- `plot_racks.py`: 랙 하루 에너지, 3월 20–21일 교환, GW1·GW5 팩 전류·전압
+- `soh_charge.py`: 검증 시험 전력량 대비 충전 SOH와 방전 SOH
+- `cell_consistency.py`: 충전 끝·방전 끝에서 셀 전압이 얼마나 모여 있는지 계산
 
 ----
 
